@@ -67,6 +67,8 @@ def extractImage(bagpath, topic_name, verbose=False):
         images = []
         for connection, timestamp, rawdata in reader.messages(connections=connections):
             msg = reader.deserialize(rawdata, connection.msgtype)
+            if msg.encoding == "16UC1":
+                msg.encoding = "mono16"
             img_array = bridge.imgmsg_to_cv2(msg)  # [height, width, (channels)]
 
             times.append(int(timestamp * 1e-6))  # milliseconds
@@ -76,7 +78,7 @@ def extractImage(bagpath, topic_name, verbose=False):
         images = np.array(images)
         # add a dummy dimension
         image_times = np.expand_dims(image_times, axis=-1)
-        if images.ndim == 2:  # depth images
+        if images.ndim == 3:  # depth images
             images = np.expand_dims(images, axis=-1)
 
         if verbose:
@@ -151,7 +153,7 @@ def extractAndDecodeCompressedImage(bagpath, topic_name, verbose=False):
         images = np.array(images)
         # add a dummy dimension
         image_times = np.expand_dims(image_times, axis=-1)
-        if images.ndim == 2:  # depth images
+        if images.ndim == 3:  # depth images
             images = np.expand_dims(images, axis=-1)
 
         if verbose:
@@ -203,6 +205,49 @@ def extractPoseStamped(bagpath, topic_name, verbose=False):
             print("pose_array", pose_array.shape)
 
         return pose_times, pose_array
+
+
+def extractTwist(bagpath, topic_name, verbose=False):
+    """Extract twist from topic of type geometry_msgs/Twist as numpy array"""
+    if verbose:
+        print(f"Extracting '{topic_name}' from '{bagpath}'")
+
+    # Create a type store to use if the bag has no message definitions.
+    typestore = get_typestore(Stores.ROS1_NOETIC)
+
+    # Create reader instance and open for reading.
+    with AnyReader([bagpath], default_typestore=typestore) as reader:
+        connections = [x for x in reader.connections if x.topic == topic_name]
+
+        times = []
+        twists = []
+        for connection, timestamp, rawdata in reader.messages(connections=connections):
+            msg = reader.deserialize(rawdata, connection.msgtype)
+
+            times.append(int(timestamp * 1e-6))
+            twists.append(
+                np.array(
+                    [
+                        msg.linear.x,
+                        msg.linear.y,
+                        msg.linear.z,
+                        msg.angular.x,
+                        msg.angular.y,
+                        msg.angular.z,
+                    ]
+                )
+            )
+
+        twist_times = np.array(times)
+        twist_array = np.array(twists, dtype="float32")
+        # add a dummy dimension
+        twist_times = np.expand_dims(twist_times, axis=-1)
+
+        if verbose:
+            print("twist_times", twist_times.shape)
+            print("twist_array", twist_array.shape)
+
+        return twist_times, twist_array
 
 
 def extractGripperFromPointStamped(bagpath, topic_name, verbose=False):
