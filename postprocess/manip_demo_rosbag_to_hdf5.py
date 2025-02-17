@@ -1,7 +1,7 @@
 """
-Script to extract desired data from recorded rosbags and store in HDF5 file.
+Script to extract manipulation demo from recorded rosbags and store in HDF5 file.
 
-Example usage: python process_demo_rosbag_to_hdf5.py --folder /path/to/folder
+Example usage: python manip_demo_rosbag_to_hdf5.py --folder /path/to/folder
 """
 
 import h5py
@@ -10,11 +10,11 @@ import time
 from os import walk
 
 from utils import (
-    extract_compressed,
-    extract_pose_stamped,
-    extract_gripper_from_point_stamped,
-    extract_joint_state,
-    get_last_data_at_ref_times,
+    extractCompressedImage,
+    extractPoseStamped,
+    extractGripperFromPointStamped,
+    extractJointState,
+    getLastDataAtRefTimes,
 )
 
 
@@ -29,60 +29,58 @@ def main(dataset_name):
         bagpath = pathlib.Path(dataset_name, demo_file).resolve()
 
         # Open rosbag and extract data.
-        head_camera_color_times, head_camera_color_images = extract_compressed(
+        head_camera_color_times, head_camera_color_images = extractCompressedImage(
             bagpath, "/tiago_head_camera/color/image_raw/compressed"
         )
-        right_camera_color_times, right_camera_color_images = extract_compressed(
+        right_camera_color_times, right_camera_color_images = extractCompressedImage(
             bagpath, "/tiago_right_camera/color/image_raw/compressed"
         )
-        cmd_right_pose_times, cmd_right_pose_array = extract_pose_stamped(
+        cmd_right_pose_times, cmd_right_pose_array = extractPoseStamped(
             bagpath, "/dxl_input/pos_right"
         )
         cmd_right_gripper_times, cmd_right_gripper_array = (
-            extract_gripper_from_point_stamped(bagpath, "/dxl_input/gripper_right")
+            extractGripperFromPointStamped(bagpath, "/dxl_input/gripper_right")
         )
 
-        goal_right_pose_times, goal_right_pose_array = extract_pose_stamped(
+        goal_right_pose_times, goal_right_pose_array = extractPoseStamped(
             bagpath, "/gripper_right_grasping_frame/goal"
         )
-        read_right_pose_times, read_right_pose_array = extract_pose_stamped(
+        read_right_pose_times, read_right_pose_array = extractPoseStamped(
             bagpath, "/gripper_right_grasping_frame/read"
         )
         right_camera_right_pose_times, right_camera_right_pose_array = (
-            extract_pose_stamped(
-                bagpath, "/tiago_right_camera_color_optical_frame/pose"
-            )
+            extractPoseStamped(bagpath, "/tiago_right_camera_color_optical_frame/pose")
         )
-        joint_times, joint_positions, joint_velocities = extract_joint_state(
+        joint_times, joint_positions, joint_velocities = extractJointState(
             bagpath, "/joint_states"
         )
 
         # Synch data with head_camera_color timestamps.
         synch_head_camera_color_array = head_camera_color_images
-        synch_right_camera_color_array = get_last_data_at_ref_times(
+        synch_right_camera_color_array = getLastDataAtRefTimes(
             head_camera_color_times, right_camera_color_times, right_camera_color_images
         )
-        synch_cmd_right_pose_array = get_last_data_at_ref_times(
+        synch_cmd_right_pose_array = getLastDataAtRefTimes(
             head_camera_color_times, cmd_right_pose_times, cmd_right_pose_array
         )
-        synch_cmd_right_gripper_array = get_last_data_at_ref_times(
+        synch_cmd_right_gripper_array = getLastDataAtRefTimes(
             head_camera_color_times, cmd_right_gripper_times, cmd_right_gripper_array
         )
-        synch_read_right_pose_array = get_last_data_at_ref_times(
+        synch_read_right_pose_array = getLastDataAtRefTimes(
             head_camera_color_times, read_right_pose_times, read_right_pose_array
         )
-        synch_goal_right_pose_array = get_last_data_at_ref_times(
+        synch_goal_right_pose_array = getLastDataAtRefTimes(
             head_camera_color_times, goal_right_pose_times, goal_right_pose_array
         )
-        synch_right_camera_pose_array = get_last_data_at_ref_times(
+        synch_right_camera_pose_array = getLastDataAtRefTimes(
             head_camera_color_times,
             right_camera_right_pose_times,
             right_camera_right_pose_array,
         )
-        synch_joint_positions_array = get_last_data_at_ref_times(
+        synch_joint_positions_array = getLastDataAtRefTimes(
             head_camera_color_times, joint_times, joint_positions
         )
-        synch_joint_velocities_array = get_last_data_at_ref_times(
+        synch_joint_velocities_array = getLastDataAtRefTimes(
             head_camera_color_times, joint_times, joint_velocities
         )
 
