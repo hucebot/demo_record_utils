@@ -88,6 +88,60 @@ def extractImage(bagpath, topic_name, verbose=False):
         return image_times, images
 
 
+def extractAndEncodeImage(bagpath, topic_name, verbose=False):
+    """Extract images from topic of type sensor_msgs/Image as encoded images (JPEG or PNG)"""
+    if verbose:
+        print(f"Extracting '{topic_name}' from '{bagpath}'")
+
+    # Create a type store to use if the bag has no message definitions.
+    typestore = get_typestore(Stores.ROS1_NOETIC)
+    # Create a CvBridge to convert between OpenCV Images and ROS Image messages.
+    bridge = CvBridge()
+
+    # Create reader instance and open for reading.
+    with AnyReader([bagpath], default_typestore=typestore) as reader:
+        connections = [x for x in reader.connections if x.topic == topic_name]
+        times = []
+        images = []
+        max_length = 0
+        for connection, timestamp, rawdata in reader.messages(connections=connections):
+            times.append(int(timestamp * 1e-6))  # milliseconds
+            msg = reader.deserialize(rawdata, connection.msgtype)
+            if msg.encoding == "16UC1":
+                msg.encoding = "mono16"
+            img_array = bridge.imgmsg_to_cv2(msg)  # [height, width, (channels)]
+
+            if img_array.ndim == 3:  # color -> JPEG
+                success, encoded_image = cv2.imencode(".jpg", img_array)
+            elif img_array.ndim == 2:  # depth -> PNG
+                success, encoded_image = cv2.imencode(".png", img_array)
+            if not success:
+                raise Exception("Image encoding failed!")
+
+            images.append(encoded_image)
+            if len(encoded_image) > max_length:
+                max_length = len(encoded_image)
+
+        # pad encoded images with 0 to have uniform length
+        padded_images = []
+        for img in images:
+            padded_images.append(
+                np.append(img, np.zeros((max_length - len(img),), dtype=img.dtype))
+            )
+
+        image_times = np.array(times)
+        padded_images = np.array(padded_images)
+
+        # add a dummy dimension
+        image_times = np.expand_dims(image_times, axis=-1)
+
+        if verbose:
+            print("image_times", image_times.shape)
+            print("padded_images", padded_images.shape)
+
+        return image_times, padded_images
+
+
 def extractCompressedImage(bagpath, topic_name, verbose=False):
     """Extract compressed images from topic of type sensor_msgs/CompressedImage as compressed JPEG"""
     if verbose:
@@ -109,7 +163,7 @@ def extractCompressedImage(bagpath, topic_name, verbose=False):
             if len(msg.data) > max_length:
                 max_length = len(msg.data)
 
-        # pad jpg with 0 to have uniform length
+        # pad encoded image with 0 to have uniform length
         padded_images = []
         for img in images:
             padded_images.append(
