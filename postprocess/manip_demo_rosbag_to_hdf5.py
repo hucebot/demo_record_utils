@@ -151,7 +151,7 @@ if __name__ == "__main__":
         description="Convert demo dataset from rosbag to hdf5"
     )
     parser.add_argument(
-        "--folder", metavar="path", required=True, help="name of the dataset folder"
+        "--folder", required=True, help="name of the dataset folder"
     )
     args = parser.parse_args()
     main(dataset_name=args.folder)
