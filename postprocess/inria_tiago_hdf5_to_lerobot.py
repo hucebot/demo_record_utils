@@ -1,7 +1,7 @@
 """
 Script to convert Inria hdf5 data to the LeRobot dataset v2.0 format.
 
-Example usage: python inria_tiago_hdf5_to_lerobot.py --hdf5_path /path/to/raw/data --repo_id <org>/<dataset-name>
+Example usage: python inria_tiago_hdf5_to_lerobot.py --hdf5_path /path/to/raw/data --repo_id <org>/<dataset-name> --task <task-name>
 """
 
 import dataclasses
@@ -10,7 +10,7 @@ import shutil
 from typing import Literal
 
 import h5py
-from lerobot.common.datasets.lerobot_dataset import LEROBOT_HOME
+from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 import numpy as np
 import torch
@@ -33,6 +33,7 @@ DEFAULT_DATASET_CONFIG = DatasetConfig()
 def create_empty_dataset(
     repo_id: str,
     robot_type: str,
+    root: Path = HF_LEROBOT_HOME,
     mode: Literal["video", "image"] = "video",
     dataset_config: DatasetConfig = DEFAULT_DATASET_CONFIG,
 ) -> LeRobotDataset:
@@ -87,11 +88,12 @@ def create_empty_dataset(
             ],
         }
 
-    if Path(LEROBOT_HOME / repo_id).exists():
-        shutil.rmtree(LEROBOT_HOME / repo_id)
+    if Path(HF_LEROBOT_HOME / repo_id).exists():
+        shutil.rmtree(HF_LEROBOT_HOME / repo_id)
 
     return LeRobotDataset.create(
         repo_id=repo_id,
+        root=root,
         fps=30,
         robot_type=robot_type,
         features=features,
@@ -199,9 +201,11 @@ def populate_dataset(
             for camera, img_array in imgs_per_cam.items():
                 frame[f"observation.images.{camera}"] = img_array[i]
 
+            frame["task"] = task
+
             dataset.add_frame(frame)
 
-        dataset.save_episode(task=task)
+        dataset.save_episode()
 
     return dataset
 
@@ -212,12 +216,12 @@ def port_inria_tiago(
     task: str = "DEBUG",
     *,
     episodes: list[int] | None = None,
-    push_to_hub: bool = True,
+    push_to_hub: bool = False,
     mode: Literal["video", "image"] = "video",
     dataset_config: DatasetConfig = DEFAULT_DATASET_CONFIG,
 ):
-    if (LEROBOT_HOME / repo_id).exists():
-        shutil.rmtree(LEROBOT_HOME / repo_id)
+    if (HF_LEROBOT_HOME / repo_id).exists():
+        shutil.rmtree(HF_LEROBOT_HOME / repo_id)
 
     dataset = create_empty_dataset(
         repo_id,
@@ -239,4 +243,7 @@ def port_inria_tiago(
 
 if __name__ == "__main__":
     tyro.cli(port_inria_tiago)
+
+    # example call:
+    # $ python inria_tiago_hdf5_to_lerobot.py --hdf5_path place_fruit_in_bowl.h5 --repo_id /tiago/place_fruit_in_bowl --task tiago_place_fruit_in_bowl
 
