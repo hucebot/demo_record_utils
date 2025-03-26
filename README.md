@@ -22,6 +22,8 @@ python manip_demo_rosbag_to_hdf5.py --folder <demo-name>
 
 This will create a HDF5 file named `<demo-name>.h5`.
 
+### HDF5 -> LeRobot
+
 This can be used to create a LeRobot dataset, using the script `inria_tiago_hdf5_to_lerobot.py`.
 
 ```bash
