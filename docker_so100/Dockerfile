@@ -126,7 +126,7 @@ RUN PATH="$HOME/bin:$PATH" PKG_CONFIG_PATH="$HOME/ffmpeg_build/lib/pkgconfig" ./
 RUN PATH="$HOME/bin:$PATH" make && make install
 RUN cp ~/bin/ffmpeg /usr/bin/ffmpeg
 
-###### Install LeRobot
+###### Install LeRobot - Tested with commit: 78fd1a1e04f87f3ec52428f72c29485124472fbc, 27-03-2025
 RUN git clone https://github.com/huggingface/lerobot.git /lerobot
 RUN cd /lerobot && pip install -e ".[feetech]"
 
