@@ -1,3 +1,8 @@
+## INSTALL THE LOCAL FILES COPIED TO THE DOCKER
+```bash
+pip install -e ".[feetech]"
+```
+
 ## TELEOPERATION - TEST
 ```bash
 python lerobot/scripts/control_robot.py \
