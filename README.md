@@ -31,3 +31,6 @@ python inria_tiago_hdf5_to_lerobot.py --hdf5_path <demo-name>.h5 --repo_id <org>
 ```
 
 By default this script save the dataset locally (inside `HF_LEROBOT_HOME=/postprocess/lerobot`).
+
+## Use of LeRobot So100
+We provide a straightforward way to use LeRobot So100 with the LeRobot library. The instructions and how to compile the docker are in the folder `docker_so100`.
