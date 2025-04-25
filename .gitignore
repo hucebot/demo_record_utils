@@ -171,3 +171,8 @@ cython_debug/
 .pypirc
 *.bag
 *.h5
+
+# Output files from the training
+/config/calibration
+/config/outputs
+/config/so100_test

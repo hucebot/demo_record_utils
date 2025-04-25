@@ -18,7 +18,7 @@ from utils import (
 )
 
 
-def main(dataset_name):
+def rosbag_to_hdf5(dataset_name):
     start_time = time.time()
 
     filenames = next(walk(pathlib.Path(dataset_name).resolve()), (None, None, []))[2]
@@ -29,12 +29,10 @@ def main(dataset_name):
         bagpath = pathlib.Path(dataset_name, demo_file).resolve()
 
         # Open rosbag and extract data.
-        head_camera_color_times, head_camera_color_images = extractCompressedImage(
-            bagpath, "/tiago_head_camera/color/image_raw/compressed"
+        frontal_camera_color_times, frontal_camera_color_images = extractCompressedImage(
+            bagpath, "/camera/color/compressed"
         )
-        right_camera_color_times, right_camera_color_images = extractCompressedImage(
-            bagpath, "/tiago_right_camera/color/image_raw/compressed"
-        )
+
         cmd_right_pose_times, cmd_right_pose_array = extractPoseStamped(
             bagpath, "/dxl_input/pos_right"
         )
@@ -42,49 +40,34 @@ def main(dataset_name):
             extractGripperFromPointStamped(bagpath, "/dxl_input/gripper_right")
         )
 
-        goal_right_pose_times, goal_right_pose_array = extractPoseStamped(
-            bagpath, "/gripper_right_grasping_frame/goal"
-        )
         read_right_pose_times, read_right_pose_array = extractPoseStamped(
-            bagpath, "/gripper_right_grasping_frame/read"
+            bagpath, "/cartesian/gripper_right_grasping_frame/reference"
         )
-        right_camera_right_pose_times, right_camera_right_pose_array = (
-            extractPoseStamped(bagpath, "/tiago_right_camera_color_optical_frame/pose")
-        )
+        
         joint_times, joint_positions, joint_velocities = extractJointState(
             bagpath, "/joint_states"
         )
 
         # Synch data with head_camera_color timestamps.
-        synch_head_camera_color_array = head_camera_color_images
-        synch_right_camera_color_array = getLastDataAtRefTimes(
-            head_camera_color_times, right_camera_color_times, right_camera_color_images
-        )
+        synch_head_camera_color_array = frontal_camera_color_images
         synch_cmd_right_pose_array = getLastDataAtRefTimes(
-            head_camera_color_times, cmd_right_pose_times, cmd_right_pose_array
+            frontal_camera_color_times, cmd_right_pose_times, cmd_right_pose_array
         )
         synch_cmd_right_gripper_array = getLastDataAtRefTimes(
-            head_camera_color_times, cmd_right_gripper_times, cmd_right_gripper_array
+            frontal_camera_color_times, cmd_right_gripper_times, cmd_right_gripper_array
         )
         synch_read_right_pose_array = getLastDataAtRefTimes(
-            head_camera_color_times, read_right_pose_times, read_right_pose_array
-        )
-        synch_goal_right_pose_array = getLastDataAtRefTimes(
-            head_camera_color_times, goal_right_pose_times, goal_right_pose_array
-        )
-        synch_right_camera_pose_array = getLastDataAtRefTimes(
-            head_camera_color_times,
-            right_camera_right_pose_times,
-            right_camera_right_pose_array,
-        )
-        synch_joint_positions_array = getLastDataAtRefTimes(
-            head_camera_color_times, joint_times, joint_positions
-        )
-        synch_joint_velocities_array = getLastDataAtRefTimes(
-            head_camera_color_times, joint_times, joint_velocities
+            frontal_camera_color_times, read_right_pose_times, read_right_pose_array
         )
 
-        timestamps = head_camera_color_times - head_camera_color_times[0]
+        synch_joint_positions_array = getLastDataAtRefTimes(
+            frontal_camera_color_times, joint_times, joint_positions
+        )
+        synch_joint_velocities_array = getLastDataAtRefTimes(
+            frontal_camera_color_times, joint_times, joint_velocities
+        )
+
+        timestamps = frontal_camera_color_times - frontal_camera_color_times[0]
         timestamps = timestamps * 1e-3
         timestamps = timestamps.astype("float32")
 
@@ -108,28 +91,10 @@ def main(dataset_name):
                 data=synch_head_camera_color_array,
             )
             group.create_dataset(
-                "observations/images/cam_right_wrist_color",
-                data=synch_right_camera_color_array,
-            )
-            group.create_dataset(
                 "observations/read_right_pos", data=synch_read_right_pose_array[:, :3]
             )
             group.create_dataset(
                 "observations/read_right_quat", data=synch_read_right_pose_array[:, 3:]
-            )
-            group.create_dataset(
-                "observations/goal_right_pos", data=synch_goal_right_pose_array[:, :3]
-            )
-            group.create_dataset(
-                "observations/goal_right_quat", data=synch_goal_right_pose_array[:, 3:]
-            )
-            group.create_dataset(
-                "observations/cam_right_wrist_pos",
-                data=synch_right_camera_pose_array[:, :3],
-            )
-            group.create_dataset(
-                "observations/cam_right_wrist_quat",
-                data=synch_right_camera_pose_array[:, 3:],
             )
             group.create_dataset(
                 "observations/joint_pos", data=synch_joint_positions_array
@@ -142,16 +107,3 @@ def main(dataset_name):
             print(f"     time: {(time.time() - demo_start_time):.2f} seconds")
 
     print(f"Total time: {(time.time() - start_time):.2f} seconds")
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Convert demo dataset from rosbag to hdf5"
-    )
-    parser.add_argument(
-        "--folder", required=True, help="name of the dataset folder"
-    )
-    args = parser.parse_args()
-    main(dataset_name=args.folder)

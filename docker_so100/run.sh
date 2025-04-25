@@ -20,7 +20,10 @@ if [ $isRunning -eq 0 ]; then
         --device /dev/snd \
         --device /dev/input \
         --device /dev/bus/usb \
+        -v /media/:/media \
         -v `pwd`/../config/calibration:/lerobot/.cache/calibration \
+        -v `pwd`/../config/so100_test:/so100_test\
+        -v `pwd`/../config/outputs:/outputs \
         -v `pwd`/../config/configs.py:/lerobot/lerobot/common/robot_devices/robots/configs.py \
         -v `pwd`/copy_files.sh:/lerobot/copy_files.sh \
         -w /lerobot \
