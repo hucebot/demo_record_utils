@@ -26,6 +26,7 @@ if [ $isRunning -eq 0 ]; then
         -v `pwd`/../config/outputs:/outputs \
         -v `pwd`/../config/configs.py:/lerobot/lerobot/common/robot_devices/robots/configs.py \
         -v `pwd`/copy_files.sh:/lerobot/copy_files.sh \
+        -v /media/:/media \
         -w /lerobot \
         lerobot:latest
 
