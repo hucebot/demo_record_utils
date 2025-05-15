@@ -80,7 +80,7 @@ def create_empty_dataset(
     for cam in cameras:
         features[f"observation.images.{cam}"] = {
             "dtype": mode,
-            "shape": (720, 1280, 3),
+            "shape": (480, 640, 3),
             "names": [
                 "height",
                 "width",
@@ -149,10 +149,10 @@ def load_raw_episode_data(
 
         # state
         read_right_pos = torch.from_numpy(
-            file[f"{ep:03d}/observations/read_right_pos"][:]
+            file[f"{ep:03d}/observations/cmd_tf_trans"][:]
         )
         read_right_quat = torch.from_numpy(
-            file[f"{ep:03d}/observations/read_right_quat"][:]
+            file[f"{ep:03d}/observations/cmd_tf_rot"][:]
         )
         state = np.concatenate((read_right_pos, read_right_quat), 1)
 
@@ -235,7 +235,6 @@ def port_inria_tiago(
         task=task,
         episodes=episodes,
     )
-    dataset.consolidate()
 
     if push_to_hub:
         dataset.push_to_hub()

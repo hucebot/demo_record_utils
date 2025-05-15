@@ -176,3 +176,4 @@ cython_debug/
 /config/calibration
 /config/outputs
 /config/so100_test
+/postprocess/lerobot

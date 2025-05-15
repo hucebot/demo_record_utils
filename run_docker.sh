@@ -12,6 +12,7 @@ if [ $IsRunning -eq "0" ]; then
         -e 'QT_X11_NO_MITSHM=1' \
         -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
         -v ./postprocess:/postprocess \
+        -v `pwd`/../stream_deck_controller/rosbags/:/rosbags/ \
         --net host \
         --ipc host \
         --pid host \

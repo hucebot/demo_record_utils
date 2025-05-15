@@ -34,3 +34,6 @@ By default this script save the dataset locally (inside `HF_LEROBOT_HOME=/postpr
 
 ## Use of LeRobot So100
 We provide a straightforward way to use LeRobot So100 with the LeRobot library. The instructions and how to compile the docker are in the folder `docker_so100`.
+
+python manip_demo_rosbag_to_hdf5.py --folder /rosbags/picking_mustard_3_places
+python inria_tiago_hdf5_to_lerobot.py --hdf5_path /rosbags/picking_mustard_3_places.h5 --repo_id inria/picking_mustard_3_places --task picking_mustard_3_places
