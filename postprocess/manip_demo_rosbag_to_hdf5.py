@@ -21,7 +21,7 @@ from utils import (
 def main(dataset_name):
     start_time = time.time()
 
-    filenames = next(walk(pathlib.Path(dataset_name).resolve()), (None, None, []))[2]
+    filenames = sorted(next(walk(pathlib.Path(dataset_name).resolve()), (None, None, []))[2])
     num_bags = len(filenames)
 
     for demo_idx, demo_file in enumerate(filenames):
