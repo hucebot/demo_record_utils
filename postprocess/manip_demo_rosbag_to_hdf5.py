@@ -32,7 +32,11 @@ def rosbag_to_hdf5(dataset_name):
         bagpath = pathlib.Path(dataset_name, demo_file).resolve()
 
         frontal_camera_color_times, frontal_camera_color_images = extractCompressedImage(
-            bagpath, "/camera/color/compressed"
+            bagpath, "/camera/0/color/compressed"
+        )
+
+        side_camera_color_times, side_camera_color_images = extractCompressedImage(
+            bagpath, "/camera/1/color/compressed"
         )
 
         cmd_right_pose_times, cmd_right_pose_array = extractPoseStamped(
@@ -50,35 +54,60 @@ def rosbag_to_hdf5(dataset_name):
             verbose=True
         )
 
-        read_right_pose_times, read_right_pose_array = extractPoseStamped(
-            bagpath, "/cartesian/gripper_right_grasping_frame/reference"
+
+        read_cartesian_joints_times, read_cartesian_joints_positions, read_cartesian_joint_velocities = extractJointState(
+            bagpath, "/cartesian/solution"
         )
 
-        # joint_times, joint_positions, joint_velocities = extractJointState(
-        #     bagpath, "/joint_states"
+        joint_times, joint_positions, joint_velocities = extractJointState(
+            bagpath, "/joint_states"
+        )
+
+        # goal_right_pose_times, goal_right_pose_array = extractPoseStamped(
+        #     bagpath, "/gripper_right_grasping_frame/goal"
+        # )
+        # read_right_pose_times, read_right_pose_array = extractPoseStamped(
+        #     bagpath, "/gripper_right_grasping_frame/read"
         # )
 
         synch_head_camera_color_array = frontal_camera_color_images
+
+        synch_side_camera_color_array = getLastDataAtRefTimes(
+            frontal_camera_color_times, side_camera_color_times, side_camera_color_images
+        )
+
         synch_cmd_right_pose_array = getLastDataAtRefTimes(
             frontal_camera_color_times, cmd_right_pose_times, cmd_right_pose_array
         )
         synch_cmd_right_gripper_array = getLastDataAtRefTimes(
             frontal_camera_color_times, cmd_right_gripper_times, cmd_right_gripper_array
         )
-        synch_read_right_pose_array = getLastDataAtRefTimes(
-            frontal_camera_color_times, read_right_pose_times, read_right_pose_array
-        )
+
+        # synch_read_right_pose_array = getLastDataAtRefTimes(
+        #     frontal_camera_color_times, read_right_pose_times, read_right_pose_array
+        # )
 
         synch_cmd_tf_array = getLastDataAtRefTimes(
             frontal_camera_color_times, cmd_tf_times, cmd_tf_array
         )
 
-        # synch_joint_positions_array = getLastDataAtRefTimes(
-        #     frontal_camera_color_times, joint_times, joint_positions
-        # )
+        synch_joint_positions_array = getLastDataAtRefTimes(
+            frontal_camera_color_times, joint_times, joint_positions
+        )
 
-        # synch_joint_velocities_array = getLastDataAtRefTimes(
-        #     frontal_camera_color_times, joint_times, joint_velocities
+        synch_joint_velocities_array = getLastDataAtRefTimes(
+            frontal_camera_color_times, joint_times, joint_velocities
+        )
+
+        synch_read_cartesian_joints_positions_array = getLastDataAtRefTimes(
+            frontal_camera_color_times, read_cartesian_joints_times, read_cartesian_joints_positions
+        )
+        synch_read_cartesian_joint_velocities_array = getLastDataAtRefTimes(
+            frontal_camera_color_times, read_cartesian_joints_times, read_cartesian_joint_velocities
+        )
+
+        # synch_goal_right_pose_array = getLastDataAtRefTimes(
+        #     frontal_camera_color_times, goal_right_pose_times, goal_right_pose_array
         # )
 
 
@@ -97,14 +126,25 @@ def rosbag_to_hdf5(dataset_name):
             group.create_dataset("actions/cmd_right_grip", data=synch_cmd_right_gripper_array)
 
             group.create_dataset("observations/images/cam_head_color", data=synch_head_camera_color_array)
-            group.create_dataset("observations/read_right_pos", data=synch_read_right_pose_array[:, :3])
-            group.create_dataset("observations/read_right_quat", data=synch_read_right_pose_array[:, 3:])
+            group.create_dataset("observations/images/cam_side_color", data=synch_side_camera_color_array)
+            # group.create_dataset("observations/read_right_pos", data=synch_read_right_pose_array[:, :3])
+            # group.create_dataset("observations/read_right_quat", data=synch_read_right_pose_array[:, 3:])
 
             group.create_dataset("observations/cmd_tf_trans", data=synch_cmd_tf_array[:, :3])
             group.create_dataset("observations/cmd_tf_rot", data=synch_cmd_tf_array[:, 3:])
 
-            # group.create_dataset("observations/joint_pos", data=synch_joint_positions_array)
-            # group.create_dataset("observations/joint_vel", data=synch_joint_velocities_array)
+            group.create_dataset("observations/joint_pos", data=synch_joint_positions_array)
+            group.create_dataset("observations/joint_vel", data=synch_joint_velocities_array)
+
+            group.create_dataset("observations/cartesian_joint_pos", data=synch_read_cartesian_joints_positions_array)
+            group.create_dataset("observations/cartesian_joint_vel", data=synch_read_cartesian_joint_velocities_array)
+
+            # group.create_dataset(
+            #     "observations/goal_right_pos", data=synch_goal_right_pose_array[:, :3]
+            # )
+            # group.create_dataset(
+            #     "observations/goal_right_quat", data=synch_goal_right_pose_array[:, 3:]
+            # )
 
     print(f"Total time: {(time.time() - start_time):.2f} seconds")
 

@@ -58,6 +58,7 @@ def create_empty_dataset(
     ]
     cameras = [
         "cam_head_color",
+        "cam_side_color",
     ]
 
     features = {
@@ -161,6 +162,7 @@ def load_raw_episode_data(
             ep,
             [
                 "cam_head_color",
+                "cam_side_color",
             ],
         )
 

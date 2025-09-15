@@ -339,7 +339,7 @@ def extractGripperFromPointStamped(bagpath, topic_name, verbose=False):
         return gripper_times, gripper_array
 
 
-def extractJointState(bagpath, topic_name, verbose=False):
+def extractJointState(bagpath, topic_name, verbose=False, side='right'):
     """Extract color images from topic of type sensor_msgs/JointState as numpy array"""
     if verbose:
         print(f"Extracting '{topic_name}' from '{bagpath}'")
@@ -353,12 +353,36 @@ def extractJointState(bagpath, topic_name, verbose=False):
         times = []
         positions = []
         velocities = []
+
+        filter_list = [
+            f"arm_{side}_1_joint",
+            f"arm_{side}_2_joint",
+            f"arm_{side}_3_joint",
+            f"arm_{side}_4_joint",
+            f"arm_{side}_5_joint",
+            f"arm_{side}_6_joint",
+            f"arm_{side}_7_joint",
+        ]
+
+        
         for connection, timestamp, rawdata in reader.messages(connections=connections):
             msg = reader.deserialize(rawdata, connection.msgtype)
+            
+            # filer the index of the joints
+            arm_positions = []
+            arm_velocities = []
+            for i in range(len(msg.name)):
+                if msg.name[i] not in filter_list:
+                    continue
+                arm_positions.append(msg.position[i])
+                arm_velocities.append(msg.velocity[i])
+                
 
-            times.append(int(timestamp * 1e-6))  # milliseconds
-            positions.append(msg.position)
-            velocities.append(msg.velocity)
+            
+            times.append(int(timestamp * 1e-6))
+            positions.append(arm_positions)
+            velocities.append(arm_velocities)
+
 
         joint_times = np.array(times)
         joint_positions = np.array(positions, dtype="float32")
