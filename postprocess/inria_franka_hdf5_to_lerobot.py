@@ -1,13 +1,14 @@
 """
-Script to convert Inria hdf5 data to the LeRobot dataset v2.0 format.
+Script to convert Inria hdf5 data to the LeRobot dataset v2.1 format.
 
-Example usage: python inria_tiago_hdf5_to_lerobot.py --hdf5_path /path/to/raw/data --repo_id <org>/<dataset-name> --task <task-name>
+Example usage: python inria_franka_hdf5_to_lerobot.py --hdf5_path /path/to/raw/data --repo_id <org>/<dataset-name> --task <task-name>
 """
 
 import dataclasses
 from pathlib import Path
 import shutil
 from typing import Literal
+import imageio
 
 import h5py
 from lerobot.common.constants import HF_LEROBOT_HOME
@@ -16,6 +17,13 @@ import numpy as np
 import torch
 import tqdm
 import tyro
+import yaml
+
+import subprocess
+import os
+
+
+os.environ["IMAGEIO_FFMPEG_EXE"] = "/usr/local/bin/ffmpeg" # make packages compile with the libsvtav installed from source
 
 
 @dataclasses.dataclass(frozen=True)
@@ -36,43 +44,29 @@ def create_empty_dataset(
     root: Path = HF_LEROBOT_HOME,
     mode: Literal["video", "image"] = "video",
     dataset_config: DatasetConfig = DEFAULT_DATASET_CONFIG,
+    custom_config=None,
+    cam_ft_dims=None,
 ) -> LeRobotDataset:
-    action = [
-        "x",
-        "y",
-        "z",
-        "qx",
-        "qy",
-        "qz",
-        "qw",
-        "grip",
-    ]
-    state = [
-        "x",
-        "y",
-        "z",
-        "qx",
-        "qy",
-        "qz",
-        "qw",
-    ]
-    cameras = [
-        "cam_head_color",
-    ]
+    fps_used = custom_config["fps_used"]
+
+    action = custom_config["action"]["lerobot_names"]
+    state = custom_config["state"]["lerobot_names"]
+
+    cameras = [k for k in custom_config["cameras"].keys()]
 
     features = {
         "observation.state": {
             "dtype": "float32",
             "shape": (len(state),),
             "names": {
-                "ee": state,
+                custom_config["state"]["lerobot_name"]: state,
             },
         },
         "action": {
             "dtype": "float32",
             "shape": (len(action),),
             "names": {
-                "ee": action,
+                custom_config["action"]["lerobot_name"]: action,
             },
         },
     }
@@ -80,7 +74,7 @@ def create_empty_dataset(
     for cam in cameras:
         features[f"observation.images.{cam}"] = {
             "dtype": mode,
-            "shape": (720, 1280, 3),
+            "shape": cam_ft_dims[cam],
             "names": [
                 "height",
                 "width",
@@ -88,13 +82,13 @@ def create_empty_dataset(
             ],
         }
 
-    if Path(HF_LEROBOT_HOME / repo_id).exists():
-        shutil.rmtree(HF_LEROBOT_HOME / repo_id)
+    if Path(root / repo_id).exists():
+        shutil.rmtree(root / repo_id)
 
     return LeRobotDataset.create(
         repo_id=repo_id,
-        root=root,
-        fps=30,
+        root=root / repo_id,
+        fps=fps_used,
         robot_type=robot_type,
         features=features,
         use_videos=dataset_config.use_videos,
@@ -106,21 +100,21 @@ def create_empty_dataset(
 
 
 def load_raw_images_per_camera(
-    hd5_file: h5py.File, ep: int, cameras: list[str]
+    hd5_file: h5py.File, ep: int, camera_dict: dict[str, str]
 ) -> dict[str, np.ndarray]:
     imgs_per_cam = {}
-    for camera in cameras:
-        uncompressed = hd5_file[f"{ep:03d}/observations/images/{camera}"].ndim == 4
+    for camera in camera_dict.keys():
+        uncompressed = hd5_file[f"{ep:03d}/"+camera_dict[camera]].ndim == 4
 
         if uncompressed:
             # load all images in RAM
-            imgs_array = hd5_file[f"{ep:03d}/observations/images/{camera}"][:]
+            imgs_array = hd5_file[f"{ep:03d}/"+camera_dict[camera]][:]
         else:
             import cv2
 
             # load one compressed image after the other in RAM and uncompress
             imgs_array = []
-            for data in hd5_file[f"{ep:03d}/observations/images/{camera}"]:
+            for data in hd5_file[f"{ep:03d}/"+camera_dict[camera]]:
                 img = cv2.imdecode(data, cv2.IMREAD_COLOR)
                 imgs_array.append(img[:, :, [2, 1, 0]])  # from BGR to RGB
             imgs_array = np.array(imgs_array)
@@ -132,6 +126,9 @@ def load_raw_images_per_camera(
 def load_raw_episode_data(
     hdf5_path: Path,
     ep: int,
+    action_ft_list,
+    state_ft_list,
+    camera_dict,
 ) -> tuple[
     dict[str, np.ndarray],
     torch.Tensor,
@@ -141,27 +138,40 @@ def load_raw_episode_data(
     torch.Tensor,
 ]:
     with h5py.File(hdf5_path, "r") as file:
+        all_keys = []
+        
+        file.visit(all_keys.append)
+
+        print(all_keys)
+
+        for key in all_keys:
+            split_key = key.split("/")
+            if len(split_key) < 3:
+                continue
+            
+            print(key, file[key][:].shape)
+
+        print(file["000/observations/f_ext"][:])
+
         # action
-        cmd_right_pos = torch.from_numpy(file[f"{ep:03d}/actions/cmd_right_pos"][:])
-        cmd_right_quat = torch.from_numpy(file[f"{ep:03d}/actions/cmd_right_quat"][:])
-        cmd_right_grip = torch.from_numpy(file[f"{ep:03d}/actions/cmd_right_grip"][:])
-        action = np.concatenate((cmd_right_pos, cmd_right_quat, cmd_right_grip), 1)
+        action = []
+        for action_ft_name in action_ft_list:
+            action.append(torch.from_numpy(file[f"{ep:03d}/"+action_ft_name][:]))
+            
+        action = np.concatenate(action, 1)
 
         # state
-        read_right_pos = torch.from_numpy(
-            file[f"{ep:03d}/observations/read_right_pos"][:]
-        )
-        read_right_quat = torch.from_numpy(
-            file[f"{ep:03d}/observations/read_right_quat"][:]
-        )
-        state = np.concatenate((read_right_pos, read_right_quat), 1)
+        state = []
+        for state_ft_name in state_ft_list:
+            state.append(torch.from_numpy(file[f"{ep:03d}/"+state_ft_name][:]))
 
+        state = np.concatenate(state, 1)
+
+        # camera
         imgs_per_cam = load_raw_images_per_camera(
             file,
             ep,
-            [
-                "cam_head_color",
-            ],
+            camera_dict,
         )
 
     return (
@@ -176,22 +186,18 @@ def populate_dataset(
     hdf5_path: Path,
     task: str,
     episodes: list[int] | None = None,
+    custom_config=None,
 ) -> LeRobotDataset:
-    if episodes is None:
-        f = h5py.File(hdf5_path, "r")
-        episodes = []
-        for key in f.keys():
-            episodes.append(int(key))
-
     for ep in tqdm.tqdm(episodes):
 
         (
             imgs_per_cam,
             state,
             action,
-        ) = load_raw_episode_data(hdf5_path, ep)
+        ) = load_raw_episode_data(hdf5_path, ep, custom_config["action"]["hdf5_selected_names"], custom_config["state"]["hdf5_selected_names"], custom_config["cameras"])
         num_frames = state.shape[0]
 
+        test_frames = {camera:[] for camera in imgs_per_cam.keys()}
         for i in range(num_frames):
             frame = {
                 "observation.state": state[i],
@@ -199,19 +205,24 @@ def populate_dataset(
             }
 
             for camera, img_array in imgs_per_cam.items():
+                test_frames[camera].append(img_array[i])
                 frame[f"observation.images.{camera}"] = img_array[i]
 
             frame["task"] = task
 
             dataset.add_frame(frame)
 
+        #for camera in test_frames.keys():
+        #    imageio.mimwrite(camera+".mp4", test_frames[camera], codec="libsvtav1", ffmpeg_params=["-pix_fmt", "yuv420p","-movflags", "+faststart","-brand", "mp42","-strict", "experimental"], fps=30, macro_block_size=1)
+ 
         dataset.save_episode()
 
     return dataset
 
 
-def port_inria_tiago(
-    hdf5_path: Path,
+def port_inria_franka(
+    hdf5_folder_path: Path,
+    hdf5_dataset_name: str,
     repo_id: str,
     task: str = "DEBUG",
     *,
@@ -223,27 +234,44 @@ def port_inria_tiago(
     if (HF_LEROBOT_HOME / repo_id).exists():
         shutil.rmtree(HF_LEROBOT_HOME / repo_id)
 
+    config = None
+    with open(hdf5_folder_path / "config.yaml") as f:
+        config = yaml.safe_load(f)
+
+    # Computes the feature dimensions and creates episodes if none selected
+    f = h5py.File(hdf5_folder_path / hdf5_dataset_name, "r")
+    if episodes is None:
+        episodes = []
+        for key in f.keys():
+            episodes.append(int(key))
+    imgs_per_cam = load_raw_images_per_camera(f, episodes[0], config["cameras"])
+    cam_resolutions = {cam:imgs_per_cam[cam].shape[1:] for cam in imgs_per_cam.keys()}
+
     dataset = create_empty_dataset(
         repo_id,
-        robot_type="tiago",
+        robot_type="franka",
         mode=mode,
         dataset_config=dataset_config,
+        custom_config=config,
+        cam_ft_dims=cam_resolutions,
     )
     dataset = populate_dataset(
         dataset,
-        hdf5_path,
+        hdf5_folder_path / hdf5_dataset_name,
         task=task,
         episodes=episodes,
+        custom_config=config,
     )
-    dataset.consolidate()
+
+    subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME], check=True)
 
     if push_to_hub:
         dataset.push_to_hub()
 
 
 if __name__ == "__main__":
-    tyro.cli(port_inria_tiago)
+    tyro.cli(port_inria_franka)
 
     # example call:
-    # $ python inria_tiago_hdf5_to_lerobot.py --hdf5_path place_fruit_in_bowl.h5 --repo_id /tiago/place_fruit_in_bowl --task tiago_place_fruit_in_bowl
+    # $ python inria_tiago_hdf5_to_lerobot.py --hdf5_path place_fruit_in_bowl.h5 --repo_id /franka/place_fruit_in_bowl --task tiago_place_fruit_in_bowl
 

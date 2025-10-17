@@ -1,147 +1,185 @@
 """
-Script to extract manipulation demo from recorded rosbags and store in HDF5 file.
+Script to extract franka (or other robot) manipulation demo from recorded rosbags and store in HDF5 file.
 
-Example usage: python manip_demo_rosbag_to_hdf5.py --folder /path/to/folder
+Example usage: python inria_franka_rosbag_to_hdf5.py --folder /path/to/folder
 """
 
 import h5py
 import pathlib
 import time
 from os import walk
+import yaml
+import numpy as np
 
 from utils import (
     extractCompressedImage,
     extractPoseStamped,
-    extractGripperFromPointStamped,
+    extractGripperWidthFromFloatStamped,
     extractJointState,
     getLastDataAtRefTimes,
 )
 
+import subprocess
 
-def main(dataset_name):
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+def extract_topic(topic_type, bagpath, topic_name):
+    if topic_type == "sensor_msgs/msg/CompressedImage":
+        return extractCompressedImage(bagpath, topic_name)
+    elif topic_type == "sensor_msgs/msg/JointState":
+        return extractJointState(bagpath, topic_name, return_vel=False)
+    elif topic_type == "geometry_msgs/msg/PoseStamped":
+        return extractPoseStamped(bagpath, topic_name)
+    elif topic_type == "std_msgs/msg/Float64":
+        return extractGripperWidthFromFloatStamped(bagpath, topic_name)
+    else:
+        raise NotImplementedError
+    
+def create_default_config(fps_used, infos, dir):
+    
+    # Default selection of topics in three categories : actions, states, cameras
+    action_name, state_name = "motor", "motor"
+    action_names, state_names, cameras_names = [], [], []
+    action_nb_tot, state_nb_tot, cameras_new_names = 0, 0, []
+    for k, v in infos.items():
+        hdf5_name, ft_dim = v["hdf5_name"], v["ft_dim"]
+
+        if "action" in hdf5_name:
+            action_names.append(hdf5_name)
+            action_nb_tot += ft_dim
+            if "joint" in hdf5_name:
+                action_name = "joint"
+        elif "cam" in hdf5_name:
+            cameras_names.append(hdf5_name)
+            cameras_new_names.append(hdf5_name.split("/")[-1])
+        else:
+            state_names.append(hdf5_name)
+            state_nb_tot += ft_dim
+            if "joint" in hdf5_name:
+                state_name = "joint"
+
+    with open(dir, "w") as config_file:
+        new_config_dico = {
+            "fps_used":fps_used,
+            "action":{
+                "lerobot_name": action_name, 
+                "lerobot_names": [str(i) for i in range(action_nb_tot)], 
+                "hdf5_selected_names":action_names 
+                }, 
+            "state":{
+                "lerobot_name": state_name, 
+                "lerobot_names": [str(i) for i in range(state_nb_tot)], 
+                "hdf5_selected_names":state_names
+                },  
+            "cameras":{new_cam_name: cam_name for new_cam_name, cam_name in zip(cameras_new_names, cameras_names)}
+        }
+        yaml.dump(new_config_dico, config_file, default_flow_style=False)
+
+def main(dataset_name, desired_dir):
     start_time = time.time()
 
-    filenames = sorted(next(walk(pathlib.Path(dataset_name).resolve()), (None, None, []))[2])
+    # Read config file to get the selected topics
+    dataset_path = pathlib.Path(dataset_name)
+    config = None
+    with open(dataset_path / "config.yaml", "r") as config_file:
+        config = yaml.safe_load(config_file)
+
+    topic_names = [topic["rosbag2_bag_topic_name"] for topic in config["selected_topics_conversion"]]
+    hdf5_names = [topic["hdf5_corresponding_name"] for topic in config["selected_topics_conversion"]]
+    reference_topic_name = config["reference_topic_name"]
+
+    number_topics = len(topic_names)
+
+    # Read metadata file to get each topic and its type
+    topic_types = {}
+    with open(dataset_path / "metadata.yaml", "r") as metadata_file:
+        metadata = yaml.safe_load(metadata_file)
+        
+        for topic_info in metadata["rosbag2_bagfile_information"]["topics_with_message_count"]:
+            topic_types[topic_info["topic_metadata"]["name"]] = topic_info["topic_metadata"]["type"]
+
+    filenames = sorted(next(walk((dataset_path / "data").resolve()), (None, None, []))[2])
     num_bags = len(filenames)
 
+    # Create new directory for hdf5
+    desired_path = pathlib.Path(desired_dir)
+    if desired_path.exists() == False:
+        desired_path.mkdir(parents=True, exist_ok=True)
+
+    infos = {topic:{"ft_dim":0, "hdf5_name":hdf5_names[i]} for i, topic in enumerate(topic_names)}
+
+    fps_tot_mean = 0
     for demo_idx, demo_file in enumerate(filenames):
         print(f"Processing demo {demo_idx + 1}/{num_bags}")
-        bagpath = pathlib.Path(dataset_name, demo_file).resolve()
+        bagpath = pathlib.Path(dataset_name, "data", demo_file).resolve()
+        demo_label = f"{demo_idx:03d}"
+        demo_start_time = time.time()
 
-        # Open rosbag and extract data.
-        head_camera_color_times, head_camera_color_images = extractCompressedImage(
-            bagpath, "/tiago_head_camera/color/image_raw/compressed"
-        )
-        right_camera_color_times, right_camera_color_images = extractCompressedImage(
-            bagpath, "/tiago_right_camera/color/image_raw/compressed"
-        )
-        cmd_right_pose_times, cmd_right_pose_array = extractPoseStamped(
-            bagpath, "/dxl_input/pos_right"
-        )
-        cmd_right_gripper_times, cmd_right_gripper_array = (
-            extractGripperFromPointStamped(bagpath, "/dxl_input/gripper_right")
-        )
+        # get the infos if it is the first demonstration
+        if demo_idx == 0:
+            for topic_name in topic_names:
+                topic_times, topic_data = extract_topic(topic_types[topic_name], bagpath, topic_name)
+                infos[topic_name]["ft_dim"] = topic_data.shape[1]
 
-        goal_right_pose_times, goal_right_pose_array = extractPoseStamped(
-            bagpath, "/gripper_right_grasping_frame/goal"
-        )
-        read_right_pose_times, read_right_pose_array = extractPoseStamped(
-            bagpath, "/gripper_right_grasping_frame/read"
-        )
-        right_camera_right_pose_times, right_camera_right_pose_array = (
-            extractPoseStamped(bagpath, "/tiago_right_camera_color_optical_frame/pose")
-        )
-        joint_times, joint_positions, joint_velocities = extractJointState(
-            bagpath, "/joint_states"
-        )
+        # search for reference topic
+        reference_topic = {}
+        for i, topic_name in enumerate(topic_names):
+            if topic_name == reference_topic_name:
+                topic_times, topic_data = extract_topic(topic_types[topic_name], bagpath, topic_name)
+                reference_topic["times"] = topic_times
+                reference_topic["data"] = topic_data
+                break
+            elif i == number_topics-1:
+                if demo_idx == 0:
+                    print(f"{bcolors.WARNING}Warning : The given reference topic is unavailable in the data so the last topic is considered the reference topic by default !{bcolors.ENDC}")
 
-        # Synch data with head_camera_color timestamps.
-        synch_head_camera_color_array = head_camera_color_images
-        synch_right_camera_color_array = getLastDataAtRefTimes(
-            head_camera_color_times, right_camera_color_times, right_camera_color_images
-        )
-        synch_cmd_right_pose_array = getLastDataAtRefTimes(
-            head_camera_color_times, cmd_right_pose_times, cmd_right_pose_array
-        )
-        synch_cmd_right_gripper_array = getLastDataAtRefTimes(
-            head_camera_color_times, cmd_right_gripper_times, cmd_right_gripper_array
-        )
-        synch_read_right_pose_array = getLastDataAtRefTimes(
-            head_camera_color_times, read_right_pose_times, read_right_pose_array
-        )
-        synch_goal_right_pose_array = getLastDataAtRefTimes(
-            head_camera_color_times, goal_right_pose_times, goal_right_pose_array
-        )
-        synch_right_camera_pose_array = getLastDataAtRefTimes(
-            head_camera_color_times,
-            right_camera_right_pose_times,
-            right_camera_right_pose_array,
-        )
-        synch_joint_positions_array = getLastDataAtRefTimes(
-            head_camera_color_times, joint_times, joint_positions
-        )
-        synch_joint_velocities_array = getLastDataAtRefTimes(
-            head_camera_color_times, joint_times, joint_velocities
-        )
+                topic_times, topic_data = extract_topic(topic_types[topic_name], bagpath, topic_name)
+                reference_topic["times"] = topic_times
+                reference_topic["data"] = topic_data
 
-        timestamps = head_camera_color_times - head_camera_color_times[0]
+        timestamps = reference_topic["times"] - reference_topic["times"][0]
         timestamps = timestamps * 1e-3
         timestamps = timestamps.astype("float32")
 
-        # Store demo data in h5 file with compression.
-        demo_label = f"{demo_idx:03d}"
-        with h5py.File(f"{dataset_name}.h5", "a") as h5file:
-            demo_start_time = time.time()
+        #print(timestamps)
+        fps_mean, fps_std = np.mean(1/np.diff(timestamps[:,0])).item(), np.std(1/np.diff(timestamps[:,0])).item()
+        print("fps", fps_mean, "+/-", fps_std)
+        fps_tot_mean = (fps_tot_mean*demo_idx+fps_mean)/(demo_idx+1)
+
+
+
+        with h5py.File(f"{desired_path / dataset_name}.h5", "a") as h5file:
             group = h5file.create_group(demo_label, track_order=True)
             group.create_dataset("timestamps", data=timestamps)
-            group.create_dataset(
-                "actions/cmd_right_pos", data=synch_cmd_right_pose_array[:, :3]
-            )
-            group.create_dataset(
-                "actions/cmd_right_quat", data=synch_cmd_right_pose_array[:, 3:]
-            )
-            group.create_dataset(
-                "actions/cmd_right_grip", data=synch_cmd_right_gripper_array
-            )
-            group.create_dataset(
-                "observations/images/cam_head_color",
-                data=synch_head_camera_color_array,
-            )
-            group.create_dataset(
-                "observations/images/cam_right_wrist_color",
-                data=synch_right_camera_color_array,
-            )
-            group.create_dataset(
-                "observations/read_right_pos", data=synch_read_right_pose_array[:, :3]
-            )
-            group.create_dataset(
-                "observations/read_right_quat", data=synch_read_right_pose_array[:, 3:]
-            )
-            group.create_dataset(
-                "observations/goal_right_pos", data=synch_goal_right_pose_array[:, :3]
-            )
-            group.create_dataset(
-                "observations/goal_right_quat", data=synch_goal_right_pose_array[:, 3:]
-            )
-            group.create_dataset(
-                "observations/cam_right_wrist_pos",
-                data=synch_right_camera_pose_array[:, :3],
-            )
-            group.create_dataset(
-                "observations/cam_right_wrist_quat",
-                data=synch_right_camera_pose_array[:, 3:],
-            )
-            group.create_dataset(
-                "observations/joint_pos", data=synch_joint_positions_array
-            )
-            group.create_dataset(
-                "observations/joint_vel", data=synch_joint_velocities_array
-            )
 
-            print(f"     data saved as demo '{demo_label}' in '{dataset_name}.h5' file")
-            print(f"     time: {(time.time() - demo_start_time):.2f} seconds")
+            for topic_idx, topic_name in enumerate(topic_names):
+                # Open rosbag and extract topic data.
+                result = extract_topic(topic_types[topic_name], bagpath, topic_name)
+                #print(topic_name, len(result))
+                topic_times, topic_data = result
+
+                # Synch data with given topic timestamps.
+                synch_topic_data = getLastDataAtRefTimes(reference_topic["times"], topic_times, topic_data)
+
+                group.create_dataset(hdf5_names[topic_idx], data=synch_topic_data)
+
+        print(f"     data saved as demo '{demo_label}' in '{desired_path / dataset_name}.h5' file")
+        print(f"     time: {(time.time() - demo_start_time):.2f} seconds")
 
     print(f"Total time: {(time.time() - start_time):.2f} seconds")
+
+    create_default_config(fps_tot_mean, infos, desired_path / "config.yaml")
+
+    subprocess.run(["chmod", "-R", "777", desired_path], check=True)
 
 
 if __name__ == "__main__":
@@ -151,7 +189,12 @@ if __name__ == "__main__":
         description="Convert demo dataset from rosbag to hdf5"
     )
     parser.add_argument(
-        "--folder", required=True, help="name of the dataset folder"
+        "--rosbag_folder", required=True, help="name of the rosbag dataset folder"
     )
+    parser.add_argument("--hdf5_dir", default="", help="name of the desired hdf5 dataset directory")
     args = parser.parse_args()
-    main(dataset_name=args.folder)
+
+    desired_dir = args.hdf5_dir
+    if desired_dir == "":
+        desired_dir = args.rosbag_folder
+    main(dataset_name=args.rosbag_folder, desired_dir=desired_dir)

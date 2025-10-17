@@ -56,7 +56,7 @@ def extractImage(bagpath, topic_name, verbose=False):
         print(f"Extracting '{topic_name}' from '{bagpath}'")
 
     # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS1_NOETIC)
+    typestore = get_typestore(Stores.ROS2_HUMBLE)
     # Create a CvBridge to convert between OpenCV Images and ROS Image messages.
     bridge = CvBridge()
 
@@ -94,7 +94,7 @@ def extractAndEncodeImage(bagpath, topic_name, verbose=False):
         print(f"Extracting '{topic_name}' from '{bagpath}'")
 
     # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS1_NOETIC)
+    typestore = get_typestore(Stores.ROS2_HUMBLE)
     # Create a CvBridge to convert between OpenCV Images and ROS Image messages.
     bridge = CvBridge()
 
@@ -148,7 +148,7 @@ def extractCompressedImage(bagpath, topic_name, verbose=False):
         print(f"Extracting '{topic_name}' from '{bagpath}'")
 
     # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS1_NOETIC)
+    typestore = get_typestore(Stores.ROS2_HUMBLE)
 
     # Create reader instance and open for reading.
     with AnyReader([bagpath], default_typestore=typestore) as reader:
@@ -189,7 +189,7 @@ def extractAndDecodeCompressedImage(bagpath, topic_name, verbose=False):
         print(f"Extracting '{topic_name}' from '{bagpath}'")
 
     # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS1_NOETIC)
+    typestore = get_typestore(Stores.ROS2_HUMBLE)
 
     # Create reader instance and open for reading.
     with AnyReader([bagpath], default_typestore=typestore) as reader:
@@ -223,7 +223,7 @@ def extractPoseStamped(bagpath, topic_name, verbose=False):
         print(f"Extracting '{topic_name}' from '{bagpath}'")
 
     # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS1_NOETIC)
+    typestore = get_typestore(Stores.ROS2_HUMBLE)
 
     # Create reader instance and open for reading.
     with AnyReader([bagpath], default_typestore=typestore) as reader:
@@ -267,7 +267,7 @@ def extractTwist(bagpath, topic_name, verbose=False):
         print(f"Extracting '{topic_name}' from '{bagpath}'")
 
     # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS1_NOETIC)
+    typestore = get_typestore(Stores.ROS2_HUMBLE)
 
     # Create reader instance and open for reading.
     with AnyReader([bagpath], default_typestore=typestore) as reader:
@@ -310,7 +310,7 @@ def extractGripperFromPointStamped(bagpath, topic_name, verbose=False):
         print(f"Extracting '{topic_name}' from '{bagpath}'")
 
     # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS1_NOETIC)
+    typestore = get_typestore(Stores.ROS2_HUMBLE)
 
     # Create reader instance and open for reading.
     with AnyReader([bagpath], default_typestore=typestore) as reader:
@@ -335,40 +335,80 @@ def extractGripperFromPointStamped(bagpath, topic_name, verbose=False):
             print("gripper_array", gripper_array.shape)
 
         return gripper_times, gripper_array
+    
+def extractGripperWidthFromFloatStamped(bagpath, topic_name, verbose=False):
+    """Extract gripper width from topic of type std_msgs/msg/Float64 as numpy array"""
+    if verbose:
+        print(f"Extracting '{topic_name}' from '{bagpath}'")
+
+    # Create a type store to use if the bag has no message definitions.
+    typestore = get_typestore(Stores.ROS2_HUMBLE)
+
+    # Create reader instance and open for reading.
+    with AnyReader([bagpath], default_typestore=typestore) as reader:
+        connections = [x for x in reader.connections if x.topic == topic_name]
+
+        times = []
+        data = []
+        for connection, timestamp, rawdata in reader.messages(connections=connections):
+            msg = reader.deserialize(rawdata, connection.msgtype)
+
+            times.append(int(timestamp * 1e-6))
+            data.append(msg.data)
+
+        gripper_times = np.array(times)
+        gripper_array = np.array(data, dtype="float32")
+        # add a dummy dimension
+        gripper_array = np.expand_dims(gripper_array, axis=-1)
+        gripper_times = np.expand_dims(gripper_times, axis=-1)
+
+        if verbose:
+            print("gripper_times", gripper_times.shape)
+            print("gripper_array", gripper_array.shape)
+
+        return gripper_times, gripper_array
 
 
-def extractJointState(bagpath, topic_name, verbose=False):
+def extractJointState(bagpath, topic_name, verbose=False, return_vel=True):
     """Extract color images from topic of type sensor_msgs/JointState as numpy array"""
     if verbose:
         print(f"Extracting '{topic_name}' from '{bagpath}'")
 
     # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS1_NOETIC)
+    typestore = get_typestore(Stores.ROS2_HUMBLE)
 
     # Create reader instance and open for reading.
     with AnyReader([bagpath], default_typestore=typestore) as reader:
         connections = [x for x in reader.connections if x.topic == topic_name]
         times = []
         positions = []
-        velocities = []
+        if return_vel:
+            velocities = []
+        
         for connection, timestamp, rawdata in reader.messages(connections=connections):
             msg = reader.deserialize(rawdata, connection.msgtype)
-            print()
+            
+            #print()
 
             times.append(int(timestamp * 1e-6))  # milliseconds
             positions.append(msg.position)
-            velocities.append(msg.velocity)
+            if return_vel:
+                velocities.append(msg.velocity)
 
         joint_times = np.array(times)
         joint_positions = np.array(positions, dtype="float32")
-        joint_velocities = np.array(velocities, dtype="float32")
+        if return_vel:
+            joint_velocities = np.array(velocities, dtype="float32")
         # add a dummy dimension
         joint_times = np.expand_dims(joint_times, axis=-1)
 
         if verbose:
             print("joint_times", joint_times.shape)
 
-        return joint_times, joint_positions, joint_velocities
+        if return_vel:
+            return joint_times, joint_positions, joint_velocities
+        else:
+            return joint_times, joint_positions
 
 
 def save_mp4_from_imgs(output_file, fps, imgs, color=True):
