@@ -14,7 +14,7 @@ import numpy as np
 from utils import (
     extractCompressedImage,
     extractPoseStamped,
-    extractGripperWidthFromFloatStamped,
+    extractGripperWidthFromGripperWidth,
     extractJointState,
     getLastDataAtRefTimes,
 )
@@ -32,15 +32,15 @@ class bcolors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-def extract_topic(topic_type, bagpath, topic_name):
+def extract_topic(topic_type, bagpath, topic_name, topic_args):
     if topic_type == "sensor_msgs/msg/CompressedImage":
-        return extractCompressedImage(bagpath, topic_name)
+        return extractCompressedImage(bagpath, topic_name, **topic_args)
     elif topic_type == "sensor_msgs/msg/JointState":
-        return extractJointState(bagpath, topic_name, return_vel=False)
+        return extractJointState(bagpath, topic_name, **topic_args)
     elif topic_type == "geometry_msgs/msg/PoseStamped":
-        return extractPoseStamped(bagpath, topic_name)
-    elif topic_type == "std_msgs/msg/Float64":
-        return extractGripperWidthFromFloatStamped(bagpath, topic_name)
+        return extractPoseStamped(bagpath, topic_name, **topic_args)
+    elif topic_type == "custom_msgs/msg/GripperWidth":
+        return extractGripperWidthFromGripperWidth(bagpath, topic_name, **topic_args)
     else:
         raise NotImplementedError
     
@@ -93,8 +93,19 @@ def main(dataset_name, desired_dir):
     with open(dataset_path / "config.yaml", "r") as config_file:
         config = yaml.safe_load(config_file)
 
-    topic_names = [topic["rosbag2_bag_topic_name"] for topic in config["selected_topics_conversion"]]
-    hdf5_names = [topic["hdf5_corresponding_name"] for topic in config["selected_topics_conversion"]]
+    topic_names = []
+    hdf5_names = []
+    topic_args = []
+    for topic in config["selected_topics_conversion"]:
+        topic_args.append({})
+        for key in topic.keys():
+            if key == "rosbag2_bag_topic_name":
+                topic_names.append(topic[key])
+            elif key == "hdf5_corresponding_name":
+                hdf5_names.append(topic[key])
+            else:
+                topic_args[-1][key] = topic[key]
+
     reference_topic_name = config["reference_topic_name"]
 
     number_topics = len(topic_names)
@@ -126,15 +137,15 @@ def main(dataset_name, desired_dir):
 
         # get the infos if it is the first demonstration
         if demo_idx == 0:
-            for topic_name in topic_names:
-                topic_times, topic_data = extract_topic(topic_types[topic_name], bagpath, topic_name)
+            for i, topic_name in enumerate(topic_names):
+                topic_times, topic_data = extract_topic(topic_types[topic_name], bagpath, topic_name, topic_args[i])
                 infos[topic_name]["ft_dim"] = topic_data.shape[1]
 
         # search for reference topic
         reference_topic = {}
         for i, topic_name in enumerate(topic_names):
             if topic_name == reference_topic_name:
-                topic_times, topic_data = extract_topic(topic_types[topic_name], bagpath, topic_name)
+                topic_times, topic_data = extract_topic(topic_types[topic_name], bagpath, topic_name, topic_args[i])
                 reference_topic["times"] = topic_times
                 reference_topic["data"] = topic_data
                 break
@@ -142,7 +153,7 @@ def main(dataset_name, desired_dir):
                 if demo_idx == 0:
                     print(f"{bcolors.WARNING}Warning : The given reference topic is unavailable in the data so the last topic is considered the reference topic by default !{bcolors.ENDC}")
 
-                topic_times, topic_data = extract_topic(topic_types[topic_name], bagpath, topic_name)
+                topic_times, topic_data = extract_topic(topic_types[topic_name], bagpath, topic_name, topic_args[i])
                 reference_topic["times"] = topic_times
                 reference_topic["data"] = topic_data
 
@@ -163,7 +174,7 @@ def main(dataset_name, desired_dir):
 
             for topic_idx, topic_name in enumerate(topic_names):
                 # Open rosbag and extract topic data.
-                result = extract_topic(topic_types[topic_name], bagpath, topic_name)
+                result = extract_topic(topic_types[topic_name], bagpath, topic_name, topic_args[topic_idx])
                 #print(topic_name, len(result))
                 topic_times, topic_data = result
 
