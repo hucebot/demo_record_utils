@@ -6,7 +6,16 @@ import cv2
 from cv_bridge import CvBridge, CvBridgeError
 import numpy as np
 from rosbags.highlevel import AnyReader
-from rosbags.typesys import Stores, get_typestore
+from rosbags.typesys import Stores, get_typestore, get_types_from_msg
+
+from std_msgs.msg import Header
+
+# Your custom message definition
+# check: https://ternaris.gitlab.io/rosbags/examples/register_types.html#from-multiple-files
+GRIPPER_WIDTH_MSG = """
+std_msgs/Header header
+float32 width
+"""
 
 
 def fixed_compressed_imgmsg_to_cv2(cmprs_img_msg, desired_encoding="passthrough"):
@@ -336,13 +345,15 @@ def extractGripperFromPointStamped(bagpath, topic_name, verbose=False):
 
         return gripper_times, gripper_array
     
-def extractGripperWidthFromFloatStamped(bagpath, topic_name, verbose=False):
+def extractGripperWidthFromGripperWidth(bagpath, topic_name, verbose=False):
     """Extract gripper width from topic of type std_msgs/msg/Float64 as numpy array"""
     if verbose:
         print(f"Extracting '{topic_name}' from '{bagpath}'")
 
     # Create a type store to use if the bag has no message definitions.
     typestore = get_typestore(Stores.ROS2_HUMBLE)
+    typestore.register(get_types_from_msg(GRIPPER_WIDTH_MSG, 'custom_msgs/msg/GripperWidth'))
+
 
     # Create reader instance and open for reading.
     with AnyReader([bagpath], default_typestore=typestore) as reader:
@@ -354,7 +365,7 @@ def extractGripperWidthFromFloatStamped(bagpath, topic_name, verbose=False):
             msg = reader.deserialize(rawdata, connection.msgtype)
 
             times.append(int(timestamp * 1e-6))
-            data.append(msg.data)
+            data.append(msg.width)
 
         gripper_times = np.array(times)
         gripper_array = np.array(data, dtype="float32")
@@ -369,7 +380,7 @@ def extractGripperWidthFromFloatStamped(bagpath, topic_name, verbose=False):
         return gripper_times, gripper_array
 
 
-def extractJointState(bagpath, topic_name, verbose=False, return_vel=True):
+def extractJointState(bagpath, topic_name, verbose=False, joint_type="position"):
     """Extract color images from topic of type sensor_msgs/JointState as numpy array"""
     if verbose:
         print(f"Extracting '{topic_name}' from '{bagpath}'")
@@ -381,9 +392,7 @@ def extractJointState(bagpath, topic_name, verbose=False, return_vel=True):
     with AnyReader([bagpath], default_typestore=typestore) as reader:
         connections = [x for x in reader.connections if x.topic == topic_name]
         times = []
-        positions = []
-        if return_vel:
-            velocities = []
+        data = []
         
         for connection, timestamp, rawdata in reader.messages(connections=connections):
             msg = reader.deserialize(rawdata, connection.msgtype)
@@ -391,24 +400,22 @@ def extractJointState(bagpath, topic_name, verbose=False, return_vel=True):
             #print()
 
             times.append(int(timestamp * 1e-6))  # milliseconds
-            positions.append(msg.position)
-            if return_vel:
-                velocities.append(msg.velocity)
+            if joint_type == "position":
+                data.append(msg.position)
+            elif joint_type == "velocity":
+                data.append(msg.velocity)
+            elif joint_type == "effort":
+                data.append(msg.effort)
 
         joint_times = np.array(times)
-        joint_positions = np.array(positions, dtype="float32")
-        if return_vel:
-            joint_velocities = np.array(velocities, dtype="float32")
+        joint_data = np.array(data, dtype="float32")
         # add a dummy dimension
         joint_times = np.expand_dims(joint_times, axis=-1)
 
         if verbose:
             print("joint_times", joint_times.shape)
 
-        if return_vel:
-            return joint_times, joint_positions, joint_velocities
-        else:
-            return joint_times, joint_positions
+        return joint_times, joint_data
 
 
 def save_mp4_from_imgs(output_file, fps, imgs, color=True):

@@ -7,16 +7,18 @@ selected_topics_conversion:
     hdf5_corresponding_name: observations/gripper_camera
   - rosbag2_bag_topic_name: /webcam1/image_raw/compressed
     hdf5_corresponding_name: observations/front_cam1
-  - rosbag2_bag_topic_name: /webcam2/image_raw/compressed
-    hdf5_corresponding_name: observations/front_cam2
-  - rosbag2_bag_topic_name: /webcam3/image_raw/compressed
-    hdf5_corresponding_name: observations/front_cam3
+  #- rosbag2_bag_topic_name: /webcam2/image_raw/compressed
+  #  hdf5_corresponding_name: observations/front_cam2
+  #- rosbag2_bag_topic_name: /webcam3/image_raw/compressed
+  #  hdf5_corresponding_name: observations/front_cam3
 
   # Robot state
   - rosbag2_bag_topic_name: /cartesian_impedance/joint_pos
     hdf5_corresponding_name: observations/joint_pos
+    joint_type: position
   - rosbag2_bag_topic_name: /cartesian_impedance/joint_vel
     hdf5_corresponding_name: observations/joint_vel
+    joint_type: velocity
   - rosbag2_bag_topic_name: /panda_gripper/width
     hdf5_corresponding_name: observations/gripper_width
 
@@ -25,6 +27,7 @@ selected_topics_conversion:
     hdf5_corresponding_name: observations/f_ext
   - rosbag2_bag_topic_name: /cartesian_impedance/joint_torques
     hdf5_corresponding_name: observations/joint_torques
+    joint_type: effort
 
   # ACTION
   - rosbag2_bag_topic_name: /cartesian_impedance/cartesian_pos_des_filt

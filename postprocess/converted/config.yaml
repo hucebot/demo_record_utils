@@ -12,10 +12,8 @@ action:
   - '6'
 cameras:
   front_cam1: observations/front_cam1
-  front_cam2: observations/front_cam2
-  front_cam3: observations/front_cam3
   gripper_camera: observations/gripper_camera
-fps_used: 15.153818130493164
+fps_used: 29.52339744567871
 state:
   hdf5_selected_names:
   - observations/joint_pos
@@ -33,3 +31,17 @@ state:
   - '5'
   - '6'
   - '7'
+  - '8'
+  - '9'
+  - '10'
+  - '11'
+  - '12'
+  - '13'
+  - '14'
+  - '15'
+  - '16'
+  - '17'
+  - '18'
+  - '19'
+  - '20'
+  - '21'

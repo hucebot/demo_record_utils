@@ -13,12 +13,14 @@ The `postprocess` folder will be mounted on the container and it is the containe
 Please make sure to save the demonstration rosbags in a dedicated folder inside `postprocess` following the structure :
 
 `<dataset-name>`
+```
 |___data
     |___episode1.db3
     |___episode2.db3
     ...
 |___config.yaml
 |___metadata.yaml
+```
 
 ### rosbags -> HDF5
 

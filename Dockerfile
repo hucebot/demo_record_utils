@@ -153,3 +153,4 @@ RUN pip install --force-reinstall -v "datasets==3.6.0"
 
 WORKDIR /postprocess
 RUN echo "export HF_LEROBOT_HOME=/postprocess/lerobot" >> ~/.bashrc
+
