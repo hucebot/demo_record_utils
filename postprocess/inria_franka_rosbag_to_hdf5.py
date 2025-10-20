@@ -49,13 +49,13 @@ def create_default_config(fps_used, infos, dir):
     # Default selection of topics in three categories : actions, states, cameras
     action_name, state_name = "motor", "motor"
     action_names, state_names, cameras_names = [], [], []
-    action_nb_tot, state_nb_tot, cameras_new_names = 0, 0, []
+    action_dims, state_dims, cameras_new_names = [], [], []
     for k, v in infos.items():
         hdf5_name, ft_dim = v["hdf5_name"], v["ft_dim"]
 
         if "action" in hdf5_name:
             action_names.append(hdf5_name)
-            action_nb_tot += ft_dim
+            action_dims.append(ft_dim)
             if "joint" in hdf5_name:
                 action_name = "joint"
         elif "cam" in hdf5_name:
@@ -63,21 +63,29 @@ def create_default_config(fps_used, infos, dir):
             cameras_new_names.append(hdf5_name.split("/")[-1])
         else:
             state_names.append(hdf5_name)
-            state_nb_tot += ft_dim
+            state_dims.append(ft_dim)
             if "joint" in hdf5_name:
                 state_name = "joint"
 
     with open(dir, "w") as config_file:
+        action_names_fts = []
+        for i, act_name in enumerate(action_names):
+            action_names_fts += [act_name.split("/")[-1]+"_"+str(j) for j in range(action_dims[i])]
+
+        state_names_fts = []
+        for i, state_name in enumerate(state_names):
+            state_names_fts += [state_name.split("/")[-1]+"_"+str(j) for j in range(state_dims[i])]
+
         new_config_dico = {
             "fps_used":fps_used,
             "action":{
                 "lerobot_name": action_name, 
-                "lerobot_names": [str(i) for i in range(action_nb_tot)], 
+                "lerobot_names": action_names_fts, 
                 "hdf5_selected_names":action_names 
                 }, 
             "state":{
                 "lerobot_name": state_name, 
-                "lerobot_names": [str(i) for i in range(state_nb_tot)], 
+                "lerobot_names": state_names_fts, 
                 "hdf5_selected_names":state_names
                 },  
             "cameras":{new_cam_name: cam_name for new_cam_name, cam_name in zip(cameras_new_names, cameras_names)}

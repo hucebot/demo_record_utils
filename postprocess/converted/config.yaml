@@ -3,17 +3,17 @@ action:
   - actions/desired_joint_pos
   lerobot_name: joint
   lerobot_names:
-  - '0'
-  - '1'
-  - '2'
-  - '3'
-  - '4'
-  - '5'
-  - '6'
+  - desired_joint_pos0
+  - desired_joint_pos1
+  - desired_joint_pos2
+  - desired_joint_pos3
+  - desired_joint_pos4
+  - desired_joint_pos5
+  - desired_joint_pos6
 cameras:
   front_cam1: observations/front_cam1
   gripper_camera: observations/gripper_camera
-fps_used: 29.52339744567871
+fps_used: 29.539661407470703
 state:
   hdf5_selected_names:
   - observations/joint_pos
@@ -21,27 +21,27 @@ state:
   - observations/gripper_width
   - observations/f_ext
   - observations/joint_torques
-  lerobot_name: joint
+  lerobot_name: observations/joint_torques
   lerobot_names:
-  - '0'
-  - '1'
-  - '2'
-  - '3'
-  - '4'
-  - '5'
-  - '6'
-  - '7'
-  - '8'
-  - '9'
-  - '10'
-  - '11'
-  - '12'
-  - '13'
-  - '14'
-  - '15'
-  - '16'
-  - '17'
-  - '18'
-  - '19'
-  - '20'
-  - '21'
+  - joint_pos0
+  - joint_pos1
+  - joint_pos2
+  - joint_pos3
+  - joint_pos4
+  - joint_pos5
+  - joint_pos6
+  - joint_vel0
+  - joint_vel1
+  - joint_vel2
+  - joint_vel3
+  - joint_vel4
+  - joint_vel5
+  - joint_vel6
+  - gripper_width0
+  - joint_torques0
+  - joint_torques1
+  - joint_torques2
+  - joint_torques3
+  - joint_torques4
+  - joint_torques5
+  - joint_torques6
