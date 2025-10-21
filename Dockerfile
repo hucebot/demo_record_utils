@@ -150,6 +150,7 @@ WORKDIR /lerobot
 RUN git checkout 790d6740babad57398e20a956a23068d377640f0
 RUN pip install -e .
 RUN pip install --force-reinstall -v "datasets==3.6.0"
+RUN pip install matplotlib
 
 WORKDIR /postprocess
 RUN echo "export HF_LEROBOT_HOME=/postprocess/lerobot" >> ~/.bashrc

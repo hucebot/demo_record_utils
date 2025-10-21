@@ -1,4 +1,5 @@
 reference_topic_name: /camera/camera/color/image_raw/compressed
+
 selected_topics_conversion:
   
   # OBSERVATION
@@ -30,5 +31,9 @@ selected_topics_conversion:
     joint_type: effort
 
   # ACTION
-  - rosbag2_bag_topic_name: /cartesian_impedance/cartesian_pos_des_filt
+  #- rosbag2_bag_topic_name: /cartesian_impedance/cartesian_pos_des_filt
+  #  hdf5_corresponding_name: actions/desired_joint_pos
+  - rosbag2_bag_topic_name: /cartesian_impedance/joint_pos
     hdf5_corresponding_name: actions/desired_joint_pos
+    joint_type: position
+    future: True

@@ -380,7 +380,7 @@ def extractGripperWidthFromGripperWidth(bagpath, topic_name, verbose=False):
         return gripper_times, gripper_array
 
 
-def extractJointState(bagpath, topic_name, verbose=False, joint_type="position"):
+def extractJointState(bagpath, topic_name, verbose=False, joint_type="position", future=False):
     """Extract color images from topic of type sensor_msgs/JointState as numpy array"""
     if verbose:
         print(f"Extracting '{topic_name}' from '{bagpath}'")
@@ -407,8 +407,14 @@ def extractJointState(bagpath, topic_name, verbose=False, joint_type="position")
             elif joint_type == "effort":
                 data.append(msg.effort)
 
-        joint_times = np.array(times)
-        joint_data = np.array(data, dtype="float32")
+        if future:
+            # Takes the future position (at next timestep)
+            joint_times = np.array(times[:-1])
+            joint_data = np.array(data[1:], dtype="float32")
+        else:
+            joint_times = np.array(times)
+            joint_data = np.array(data, dtype="float32")
+
         # add a dummy dimension
         joint_times = np.expand_dims(joint_times, axis=-1)
 

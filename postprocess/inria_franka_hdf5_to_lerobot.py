@@ -14,6 +14,7 @@ import h5py
 from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 import numpy as np
+import matplotlib.pyplot as plt
 import torch
 import tqdm
 import tyro
@@ -21,9 +22,25 @@ import yaml
 
 import subprocess
 import os
+from contextlib import redirect_stdout, redirect_stderr
 
 
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/usr/local/bin/ffmpeg" # make packages compile with the libsvtav installed from source
+
+def suppress_c_stdout_stderr():
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stdout = os.dup(1)
+    old_stderr = os.dup(2)
+    os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
+    return old_stdout, old_stderr, devnull
+
+def restore_c_stdout_stderr(old_stdout, old_stderr, devnull):
+    os.dup2(old_stdout, 1)
+    os.dup2(old_stderr, 2)
+    os.close(old_stdout)
+    os.close(old_stderr)
+    os.close(devnull)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -129,6 +146,8 @@ def load_raw_episode_data(
     action_ft_list,
     state_ft_list,
     camera_dict,
+    show_data_analysis,
+    verbose,
 ) -> tuple[
     dict[str, np.ndarray],
     torch.Tensor,
@@ -142,30 +161,36 @@ def load_raw_episode_data(
         
         file.visit(all_keys.append)
 
-        print(all_keys)
+        #print(all_keys)
 
         for key in all_keys:
             split_key = key.split("/")
             if len(split_key) < 3:
                 continue
             
-            print(key, file[key][:].shape)
+            #print(key, file[key][:].shape)
 
-        print(file["000/observations/f_ext"][:])
+        #print(file["000/observations/f_ext"][:])
 
         # action
         action = []
         for action_ft_name in action_ft_list:
             action.append(torch.from_numpy(file[f"{ep:03d}/"+action_ft_name][:]))
-            
-        action = np.concatenate(action, 1)
 
         # state
         state = []
         for state_ft_name in state_ft_list:
             state.append(torch.from_numpy(file[f"{ep:03d}/"+state_ft_name][:]))
 
-        state = np.concatenate(state, 1)
+        if show_data_analysis:
+
+            for i, state_ft_name in enumerate(state_ft_list):
+                dists = np.linalg.norm(np.diff(state[i], 1, axis=0), axis=1)
+                plt.plot(dists)
+                plt.savefig(state_ft_name.split("/")[-1]+".png", bbox_inches="tight")
+                plt.close()
+            if verbose:
+                print("Data analysis plot saved as plot.png")
 
         # camera
         imgs_per_cam = load_raw_images_per_camera(
@@ -173,6 +198,9 @@ def load_raw_episode_data(
             ep,
             camera_dict,
         )
+
+        action = np.concatenate(action, 1)
+        state = np.concatenate(state, 1)
 
     return (
         imgs_per_cam,
@@ -187,14 +215,17 @@ def populate_dataset(
     task: str,
     episodes: list[int] | None = None,
     custom_config=None,
+    show_data_analysis=False,
+    verbose=False,
 ) -> LeRobotDataset:
+    
     for ep in tqdm.tqdm(episodes):
 
         (
             imgs_per_cam,
             state,
             action,
-        ) = load_raw_episode_data(hdf5_path, ep, custom_config["action"]["hdf5_selected_names"], custom_config["state"]["hdf5_selected_names"], custom_config["cameras"])
+        ) = load_raw_episode_data(hdf5_path, ep, custom_config["action"]["hdf5_selected_names"], custom_config["state"]["hdf5_selected_names"], custom_config["cameras"], show_data_analysis, verbose)
         num_frames = state.shape[0]
 
         test_frames = {camera:[] for camera in imgs_per_cam.keys()}
@@ -214,22 +245,30 @@ def populate_dataset(
 
         #for camera in test_frames.keys():
         #    imageio.mimwrite(camera+".mp4", test_frames[camera], codec="libsvtav1", ffmpeg_params=["-pix_fmt", "yuv420p","-movflags", "+faststart","-brand", "mp42","-strict", "experimental"], fps=30, macro_block_size=1)
- 
-        dataset.save_episode()
+        if verbose:
+            dataset.save_episode()
+        else:
+            old_stdout, old_stderr, devnull = suppress_c_stdout_stderr()
+            try:
+                dataset.save_episode()
+            finally:
+                restore_c_stdout_stderr(old_stdout, old_stderr, devnull)
 
     return dataset
 
 
 def port_inria_franka(
     hdf5_folder_path: Path,
-    hdf5_dataset_name: str,
     repo_id: str,
+    hdf5_dataset_name: str | None = None,
     task: str = "DEBUG",
     *,
     episodes: list[int] | None = None,
     push_to_hub: bool = False,
     mode: Literal["video", "image"] = "video",
     dataset_config: DatasetConfig = DEFAULT_DATASET_CONFIG,
+    show_data_analysis: bool = False,
+    verbose=False,
 ):
     if (HF_LEROBOT_HOME / repo_id).exists():
         shutil.rmtree(HF_LEROBOT_HOME / repo_id)
@@ -237,6 +276,12 @@ def port_inria_franka(
     config = None
     with open(hdf5_folder_path / "config.yaml") as f:
         config = yaml.safe_load(f)
+
+    if hdf5_dataset_name is None:
+        for f in os.listdir(hdf5_folder_path):
+            if f.split(".")[-1] == "h5":
+                hdf5_dataset_name = f
+                break
 
     # Computes the feature dimensions and creates episodes if none selected
     f = h5py.File(hdf5_folder_path / hdf5_dataset_name, "r")
@@ -261,6 +306,8 @@ def port_inria_franka(
         task=task,
         episodes=episodes,
         custom_config=config,
+        show_data_analysis=show_data_analysis,
+        verbose=verbose,
     )
 
     subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME], check=True)
