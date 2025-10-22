@@ -1,4 +1,4 @@
-reference_topic_name: /camera/camera/color/image_raw/compressed
+reference_topic_name: /webcam1/image_raw/compressed
 
 selected_topics_conversion:
   

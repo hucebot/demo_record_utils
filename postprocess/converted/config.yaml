@@ -13,15 +13,23 @@ action:
 cameras:
   front_cam1: observations/front_cam1
   gripper_camera: observations/gripper_camera
-fps_used: 29.539661407470703
+fps_used: 15.042706489562988
 state:
   hdf5_selected_names:
+  - observations/joint_pos
   - observations/joint_vel
   - observations/gripper_width
   - observations/f_ext
   - observations/joint_torques
   lerobot_name: observations/joint_torques
   lerobot_names:
+  - joint_pos_0
+  - joint_pos_1
+  - joint_pos_2
+  - joint_pos_3
+  - joint_pos_4
+  - joint_pos_5
+  - joint_pos_6
   - joint_vel_0
   - joint_vel_1
   - joint_vel_2

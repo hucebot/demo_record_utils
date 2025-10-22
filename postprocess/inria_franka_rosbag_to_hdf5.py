@@ -50,7 +50,7 @@ def create_default_config(fps_used, infos, dir):
     action_name, state_name = "motor", "motor"
     action_names, state_names, cameras_names = [], [], []
     action_dims, state_dims, cameras_new_names = [], [], []
-    for k, v in infos.items():
+    for v in infos:
         hdf5_name, ft_dim = v["hdf5_name"], v["ft_dim"]
 
         if "action" in hdf5_name:
@@ -134,7 +134,7 @@ def main(dataset_name, desired_dir):
     if desired_path.exists() == False:
         desired_path.mkdir(parents=True, exist_ok=True)
 
-    infos = {topic:{"ft_dim":0, "hdf5_name":hdf5_names[i]} for i, topic in enumerate(topic_names)}
+    infos = []
 
     fps_tot_mean = 0
     for demo_idx, demo_file in enumerate(filenames):
@@ -147,7 +147,9 @@ def main(dataset_name, desired_dir):
         if demo_idx == 0:
             for i, topic_name in enumerate(topic_names):
                 topic_times, topic_data = extract_topic(topic_types[topic_name], bagpath, topic_name, topic_args[i])
-                infos[topic_name]["ft_dim"] = topic_data.shape[1]
+                infos.append({})
+                infos[-1]["hdf5_name"] = hdf5_names[i]
+                infos[-1]["ft_dim"] = topic_data.shape[1]
 
         # search for reference topic
         reference_topic = {}

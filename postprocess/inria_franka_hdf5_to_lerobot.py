@@ -22,10 +22,11 @@ import yaml
 
 import subprocess
 import os
-from contextlib import redirect_stdout, redirect_stderr
 
 
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/usr/local/bin/ffmpeg" # make packages compile with the libsvtav installed from source
+
+# Silence utility functions (to avoid printing in the shell the excessive svt library warning stdouts)
 
 def suppress_c_stdout_stderr():
     devnull = os.open(os.devnull, os.O_WRONLY)
@@ -41,6 +42,25 @@ def restore_c_stdout_stderr(old_stdout, old_stderr, devnull):
     os.close(old_stdout)
     os.close(old_stderr)
     os.close(devnull)
+
+# Data analysis utility functions
+
+def spearman_coefficient_matrix(x, y):
+    """
+    Parameters :
+    x: Array of shape (N, K),
+    y: Array of shape (N, L)
+
+    Returns :
+    Spearman matrix: Array of shape (K, L)
+    """
+    rx, ry = np.argsort(x, axis=0), np.argsort(y, axis=0)
+
+    mean_rx, mean_ry = np.mean(rx[:,:,None], axis=0), np.mean(ry[:,None,:], axis=0)
+    cov_rxry = np.mean(rx[:,:,None]*ry[:,None,:], axis=0) - mean_rx*mean_ry
+    var_rx, var_ry = np.mean(rx[:,:,None]**2, axis=0) - mean_rx**2, np.mean(ry[:,None,:]**2, axis=0) - mean_ry**2
+
+    return cov_rxry/np.sqrt(var_ry*var_rx)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -147,6 +167,7 @@ def load_raw_episode_data(
     state_ft_list,
     camera_dict,
     show_data_analysis,
+    lerobot_path,
     verbose,
 ) -> tuple[
     dict[str, np.ndarray],
@@ -163,12 +184,13 @@ def load_raw_episode_data(
 
         #print(all_keys)
 
-        for key in all_keys:
-            split_key = key.split("/")
-            if len(split_key) < 3:
-                continue
+        #for key in all_keys:
+            #split_key = key.split("/")
+            #if len(split_key) < 3:
+            #    continue
             
-            #print(key, file[key][:].shape)
+            #print(key)
+            #print(file[key][:].shape)
 
         #print(file["000/observations/f_ext"][:])
 
@@ -182,22 +204,59 @@ def load_raw_episode_data(
         for state_ft_name in state_ft_list:
             state.append(torch.from_numpy(file[f"{ep:03d}/"+state_ft_name][:]))
 
-        if show_data_analysis:
-
-            for i, state_ft_name in enumerate(state_ft_list):
-                dists = np.linalg.norm(np.diff(state[i], 1, axis=0), axis=1)
-                plt.plot(dists)
-                plt.savefig(state_ft_name.split("/")[-1]+".png", bbox_inches="tight")
-                plt.close()
-            if verbose:
-                print("Data analysis plot saved as plot.png")
-
         # camera
         imgs_per_cam = load_raw_images_per_camera(
             file,
             ep,
             camera_dict,
         )
+
+        if show_data_analysis:
+            if lerobot_path is not None:
+                os.mkdir(lerobot_path / "data analysis" / str(ep))
+
+            state_dists, img_dists = {}, {}
+            for i, state_ft_name in enumerate(state_ft_list):
+                state_dists[state_ft_name] = np.linalg.norm(np.diff(state[i], 1, axis=0), axis=1)
+
+                if lerobot_path is not None:
+                    plt.plot(state_dists[state_ft_name])
+                    plt.savefig(lerobot_path / "data analysis" / str(ep) / (state_ft_name.split("/")[-1]+".png"), bbox_inches="tight")
+                    plt.close()
+
+                    if verbose:
+                        print("Data analysis plot saved as", lerobot_path / "data analysis" / str(ep) / (state_ft_name.split("/")[-1]+".png"))
+
+            for cam in imgs_per_cam.keys():
+                #print(cam, imgs_per_cam[cam].shape)
+                N = imgs_per_cam[cam].shape[0]
+                img_dists[cam] = np.linalg.norm(np.diff(imgs_per_cam[cam].reshape(N, -1), 1, axis=0), axis=1)
+
+                if lerobot_path is not None:
+                    plt.plot(img_dists[cam])
+                    plt.savefig(lerobot_path / "data analysis" / str(ep) / (cam+".png"), bbox_inches="tight")
+                    plt.close()
+
+                    if verbose:
+                        print("Data analysis plot saved as", lerobot_path / "data analysis" / str(ep) / (cam+".png"))
+
+            labels = [key for key in state_dists.keys()]+[key for key in imgs_per_cam.keys()]
+            x = np.concatenate([state_dists[key][:,None] for key in state_dists.keys()] + [img_dists[key][:,None] for key in imgs_per_cam.keys()], axis=1)
+            coef_mat = spearman_coefficient_matrix(x, x)
+
+            if lerobot_path is not None:
+                xaxis = np.arange(len(labels))
+                fig = plt.figure()
+                ax = plt.gca()
+                im = ax.matshow(coef_mat, interpolation='none')
+                fig.colorbar(im)
+                ax.set_xticks(xaxis)
+                ax.set_yticks(xaxis)
+                ax.set_xticklabels(labels)
+                ax.set_yticklabels(labels)
+                fig.tight_layout()
+                plt.savefig(lerobot_path / "data analysis" / str(ep) / ("spearman_matrix.png"), bbox_inches="tight")
+                plt.close()
 
         action = np.concatenate(action, 1)
         state = np.concatenate(state, 1)
@@ -216,8 +275,12 @@ def populate_dataset(
     episodes: list[int] | None = None,
     custom_config=None,
     show_data_analysis=False,
+    lerobot_path=None,
     verbose=False,
 ) -> LeRobotDataset:
+    
+    if show_data_analysis and lerobot_path is not None:
+        os.mkdir(lerobot_path / "data analysis")
     
     for ep in tqdm.tqdm(episodes):
 
@@ -225,7 +288,7 @@ def populate_dataset(
             imgs_per_cam,
             state,
             action,
-        ) = load_raw_episode_data(hdf5_path, ep, custom_config["action"]["hdf5_selected_names"], custom_config["state"]["hdf5_selected_names"], custom_config["cameras"], show_data_analysis, verbose)
+        ) = load_raw_episode_data(hdf5_path, ep, custom_config["action"]["hdf5_selected_names"], custom_config["state"]["hdf5_selected_names"], custom_config["cameras"], show_data_analysis, lerobot_path, verbose)
         num_frames = state.shape[0]
 
         test_frames = {camera:[] for camera in imgs_per_cam.keys()}
@@ -307,6 +370,7 @@ def port_inria_franka(
         episodes=episodes,
         custom_config=config,
         show_data_analysis=show_data_analysis,
+        lerobot_path=HF_LEROBOT_HOME / repo_id,
         verbose=verbose,
     )
 
