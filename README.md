@@ -35,7 +35,7 @@ The script `inria_franka_rosbag_to_hdf5.py` converts manipulation demos (inside 
 python inria_franka_rosbag_to_hdf5.py --rosbag_folder <dataset-name> --hdf5_dir <dataset-name>_converted --tasks task1 task2 ... taskn
 ```
 
-This will create an HDF5 file named `<task>.h5` for each task in $\{{\rm task1}, {\rm task2}, ..., {\rm taskn}\}$ and a default config file for possible conversion to a LeRobot dataset if there is none in a folder `<dataset-name>_converted` (created if it doesn't exist).
+This will create an HDF5 file named `<task>.h5` for each given `<task>` and a default config file for possible conversion to a LeRobot dataset if there is none in a folder `<dataset-name>_converted` (created if it doesn't exist).
 
 ### HDF5 -> LeRobot
 

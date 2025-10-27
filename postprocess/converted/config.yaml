@@ -1,12 +1,49 @@
 action:
-  hdf5_selected_names: []
-  lerobot_name: motor
-  lerobot_names: []
-cameras: {}
+  hdf5_selected_names:
+  - actions/desired_joint_pos
+  lerobot_name: joint
+  lerobot_names:
+  - desired_joint_pos_0
+  - desired_joint_pos_1
+  - desired_joint_pos_2
+  - desired_joint_pos_3
+  - desired_joint_pos_4
+  - desired_joint_pos_5
+  - desired_joint_pos_6
+cameras:
+  front_cam1: observations/front_cam1
+  gripper_camera: observations/gripper_camera
 fps_used:
-  test: 0
+  test: 15.044692039489746
 outlier_deletion: false
 state:
-  hdf5_selected_names: []
-  lerobot_name: motor
-  lerobot_names: []
+  hdf5_selected_names:
+  - observations/joint_pos
+  - observations/joint_vel
+  - observations/gripper_width
+  - observations/f_ext
+  - observations/joint_torques
+  lerobot_name: observations/joint_torques
+  lerobot_names:
+  - joint_pos_0
+  - joint_pos_1
+  - joint_pos_2
+  - joint_pos_3
+  - joint_pos_4
+  - joint_pos_5
+  - joint_pos_6
+  - joint_vel_0
+  - joint_vel_1
+  - joint_vel_2
+  - joint_vel_3
+  - joint_vel_4
+  - joint_vel_5
+  - joint_vel_6
+  - gripper_width_0
+  - joint_torques_0
+  - joint_torques_1
+  - joint_torques_2
+  - joint_torques_3
+  - joint_torques_4
+  - joint_torques_5
+  - joint_torques_6

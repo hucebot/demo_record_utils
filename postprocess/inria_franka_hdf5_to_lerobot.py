@@ -113,6 +113,7 @@ DEFAULT_DATASET_CONFIG = DatasetConfig()
 
 def create_empty_dataset(
     repo_id: str,
+    task,
     robot_type: str,
     root: Path = HF_LEROBOT_HOME,
     mode: Literal["video", "image"] = "video",
@@ -120,7 +121,7 @@ def create_empty_dataset(
     custom_config=None,
     cam_ft_dims=None,
 ) -> LeRobotDataset:
-    fps_used = custom_config["fps_used"]
+    fps_used = custom_config["fps_used"][task]
 
     action = custom_config["action"]["lerobot_names"]
     state = custom_config["state"]["lerobot_names"]
@@ -418,6 +419,7 @@ def port_inria_franka(
 
     dataset = create_empty_dataset(
         repo_id,
+        task,
         robot_type="franka",
         mode=mode,
         dataset_config=dataset_config,
