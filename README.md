@@ -14,12 +14,17 @@ Please make sure to save the demonstration rosbags in a dedicated folder inside 
 
 `<dataset-name>`
 ```
-|___data
-    |___episode1.db3
-    |___episode2.db3
+|___task1
+    |___episode1
+        |___teleop_result.db3
+        |___metadata.yaml
+    |___episode2
+        |___teleop_result.db3
+        |___metadata.yaml
     ...
+|___task2
+...
 |___config.yaml
-|___metadata.yaml
 ```
 
 ### rosbags -> HDF5
@@ -27,10 +32,10 @@ Please make sure to save the demonstration rosbags in a dedicated folder inside 
 The script `inria_franka_rosbag_to_hdf5.py` converts manipulation demos (inside the folder `<dataset-name>`) into a HDF5 file.
 
 ```bash
-python inria_franka_rosbag_to_hdf5.py --rosbag_folder <dataset-name> --hdf5_dir <dataset-name>_converted
+python inria_franka_rosbag_to_hdf5.py --rosbag_folder <dataset-name> --hdf5_dir <dataset-name>_converted --tasks task1 task2 ... taskn
 ```
 
-This will create a folder `<dataset-name>_converted` containing an HDF5 file named `<dataset-name>.h5` and a default config file for possible conversion to a LeRobot dataset.
+This will create an HDF5 file named `<task>.h5` for each task in $\{{\rm task1}, {\rm task2}, ..., {\rm taskn}\}$ and a default config file for possible conversion to a LeRobot dataset if there is none in a folder `<dataset-name>_converted` (created if it doesn't exist).
 
 ### HDF5 -> LeRobot
 

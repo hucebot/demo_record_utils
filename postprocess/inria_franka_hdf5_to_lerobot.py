@@ -48,7 +48,7 @@ def restore_c_stdout_stderr(old_stdout, old_stderr, devnull):
 def spearman_coefficient_matrix(x, y):
     """
     Parameters :
-    x: Array of shape (N, K),
+    x: Array of shape (N, K)
     y: Array of shape (N, L)
 
     Returns :
@@ -61,6 +61,42 @@ def spearman_coefficient_matrix(x, y):
     var_rx, var_ry = np.mean(rx[:,:,None]**2, axis=0) - mean_rx**2, np.mean(ry[:,None,:]**2, axis=0) - mean_ry**2
 
     return cov_rxry/np.sqrt(var_ry*var_rx)
+
+def find_lower_outlier(x):
+    """
+    Parameters :
+    x : Array of positive floats and shape (N,)
+
+    Returns :
+    Index : the sorted indices of lower outliers in x
+    """
+    sorted_idx = np.argsort(x)
+    sorted_x = x[sorted_idx]
+
+    # dichotomy search for the lower outlier with the largest value 
+    last_dec_idx, gamma = [0, 0], [0., 0.01]
+    for j in range(10):
+        gamma_pow = gamma[-1]**(np.arange(len(sorted_x))+1)
+        soft_sorted_x = (1-gamma[-1])/(1-gamma_pow)*np.cumsum(gamma_pow*sorted_x)
+        Femp = np.mean((soft_sorted_x[None,:] <= soft_sorted_x[:,None])*1., axis=1)
+        Femp = np.clip((Femp[1:] - Femp[:-1])/(soft_sorted_x[1:]-soft_sorted_x[:-1]), 0., 100)
+
+        # Select the last outlier index that affects heavily the distribution : the total count of outliers must not exceed 20% of the total data sample size
+        new_last_dec_idx = 0
+        for i in range(len(Femp)//5):
+            if Femp[i+1] < Femp[i]:
+                new_last_dec_idx = i+2
+        if new_last_dec_idx - 1 < len(Femp)//5:
+            last_dec_idx[0] = last_dec_idx[1]
+            last_dec_idx[1] = new_last_dec_idx
+            gamma[0] = gamma[1]
+            gamma[1] = (gamma[1]+1)/2
+        else:
+            gamma[1] = (gamma[1]+gamma[0])/2
+
+        print(new_last_dec_idx, len(Femp)//2, "gamma : ", gamma, "last idx : ", last_dec_idx)
+
+    return np.sort(sorted_idx[:last_dec_idx[1]])
 
 
 @dataclasses.dataclass(frozen=True)
@@ -168,6 +204,7 @@ def load_raw_episode_data(
     camera_dict,
     show_data_analysis,
     lerobot_path,
+    outlier_deletion,
     verbose,
 ) -> tuple[
     dict[str, np.ndarray],
@@ -211,55 +248,79 @@ def load_raw_episode_data(
             camera_dict,
         )
 
-        if show_data_analysis:
-            if lerobot_path is not None:
-                os.mkdir(lerobot_path / "data analysis" / str(ep))
+        # Data analysis
+        state_dists, img_dists = {}, {}
+        for i, state_ft_name in enumerate(state_ft_list):
+            state_dists[state_ft_name] = np.linalg.norm(np.diff(state[i], 1, axis=0), axis=-1)
 
-            state_dists, img_dists = {}, {}
-            for i, state_ft_name in enumerate(state_ft_list):
-                state_dists[state_ft_name] = np.linalg.norm(np.diff(state[i], 1, axis=0), axis=1)
+        for cam in imgs_per_cam.keys():
+            N = imgs_per_cam[cam].shape[0]
+            imgcam = imgs_per_cam[cam].reshape(N, -1)
+            img_dists[cam] = np.linalg.norm(np.diff(imgcam, 1, axis=0), axis=-1)
 
-                if lerobot_path is not None:
-                    plt.plot(state_dists[state_ft_name])
-                    plt.savefig(lerobot_path / "data analysis" / str(ep) / (state_ft_name.split("/")[-1]+".png"), bbox_inches="tight")
-                    plt.close()
+        mean_dists = np.mean([np.mean([state_dists[key]/(1e-15+np.max(state_dists[key])) for key in state_dists.keys()], axis=0), np.mean([img_dists[key]/(1e-15+np.max(img_dists[key])) for key in imgs_per_cam.keys()], axis=0)], axis=0)
 
-                    if verbose:
-                        print("Data analysis plot saved as", lerobot_path / "data analysis" / str(ep) / (state_ft_name.split("/")[-1]+".png"))
+        # Data post-processing
+        action = np.concatenate(action, 1)
+        state = np.concatenate(state, 1)
+        if outlier_deletion:
+            out_indices = find_lower_outlier(mean_dists)
+
+            print(action.shape)
+            action = np.concatenate([action[out_indices[i]+1:out_indices[i+1]] for i in range(len(out_indices)-1)]+[action[out_indices[-1]+1:]], axis=0)
+            state = np.concatenate([state[out_indices[i]+1:out_indices[i+1]] for i in range(len(out_indices)-1)]+[state[out_indices[-1]+1:]], axis=0)
+            for cam in imgs_per_cam.keys():
+                imgs_per_cam[cam] = np.concatenate([imgs_per_cam[cam][out_indices[i]+1:out_indices[i+1]] for i in range(len(out_indices)-1)]+[imgs_per_cam[cam][out_indices[-1]+1:]], axis=0)
+
+            print(action.shape)
+
+        # Save data analysis
+        if show_data_analysis and lerobot_path is not None:
+            os.mkdir(lerobot_path / "data analysis" / str(ep))
+
+            for state_ft_name in state_ft_list:
+                if outlier_deletion:
+                    plt.scatter(out_indices, state_dists[state_ft_name][out_indices])
+                plt.plot(state_dists[state_ft_name])
+                plt.savefig(lerobot_path / "data analysis" / str(ep) / (state_ft_name.split("/")[-1]+".png"), bbox_inches="tight")
+                plt.close()
+
+                if verbose:
+                    print("Data analysis plot saved as", lerobot_path / "data analysis" / str(ep) / (state_ft_name.split("/")[-1]+".png"))
 
             for cam in imgs_per_cam.keys():
-                #print(cam, imgs_per_cam[cam].shape)
-                N = imgs_per_cam[cam].shape[0]
-                img_dists[cam] = np.linalg.norm(np.diff(imgs_per_cam[cam].reshape(N, -1), 1, axis=0), axis=1)
+                if outlier_deletion:
+                    plt.scatter(out_indices, img_dists[cam][out_indices])
+                plt.plot(img_dists[cam])
+                plt.savefig(lerobot_path / "data analysis" / str(ep) / (cam+".png"), bbox_inches="tight")
+                plt.close()
 
-                if lerobot_path is not None:
-                    plt.plot(img_dists[cam])
-                    plt.savefig(lerobot_path / "data analysis" / str(ep) / (cam+".png"), bbox_inches="tight")
-                    plt.close()
-
-                    if verbose:
-                        print("Data analysis plot saved as", lerobot_path / "data analysis" / str(ep) / (cam+".png"))
+                if verbose:
+                    print("Data analysis plot saved as", lerobot_path / "data analysis" / str(ep) / (cam+".png"))
 
             labels = [key for key in state_dists.keys()]+[key for key in imgs_per_cam.keys()]
             x = np.concatenate([state_dists[key][:,None] for key in state_dists.keys()] + [img_dists[key][:,None] for key in imgs_per_cam.keys()], axis=1)
             coef_mat = spearman_coefficient_matrix(x, x)
 
-            if lerobot_path is not None:
-                xaxis = np.arange(len(labels))
-                fig = plt.figure()
-                ax = plt.gca()
-                im = ax.matshow(coef_mat, interpolation='none')
-                fig.colorbar(im)
-                ax.set_xticks(xaxis)
-                ax.set_yticks(xaxis)
-                ax.set_xticklabels(labels)
-                ax.set_yticklabels(labels)
-                fig.tight_layout()
-                plt.savefig(lerobot_path / "data analysis" / str(ep) / ("spearman_matrix.png"), bbox_inches="tight")
-                plt.close()
+            xaxis = np.arange(len(labels))
+            fig = plt.figure()
+            ax = plt.gca()
+            im = ax.matshow(coef_mat, interpolation='none')
+            fig.colorbar(im)
+            ax.set_xticks(xaxis)
+            ax.set_yticks(xaxis)
+            ax.set_xticklabels(labels)
+            ax.set_yticklabels(labels)
+            fig.tight_layout()
+            plt.savefig(lerobot_path / "data analysis" / str(ep) / ("spearman_matrix.png"), bbox_inches="tight")
+            plt.close()
 
-        action = np.concatenate(action, 1)
-        state = np.concatenate(state, 1)
+            if outlier_deletion:
+                plt.scatter(out_indices, mean_dists[out_indices])
+            plt.plot(mean_dists, label="total state distance")
+            plt.legend(loc="best")
+            plt.savefig(lerobot_path / "data analysis" / str(ep) / ("total_state.png"), bbox_inches="tight")
+            plt.close()
 
     return (
         imgs_per_cam,
@@ -288,7 +349,7 @@ def populate_dataset(
             imgs_per_cam,
             state,
             action,
-        ) = load_raw_episode_data(hdf5_path, ep, custom_config["action"]["hdf5_selected_names"], custom_config["state"]["hdf5_selected_names"], custom_config["cameras"], show_data_analysis, lerobot_path, verbose)
+        ) = load_raw_episode_data(hdf5_path, ep, custom_config["action"]["hdf5_selected_names"], custom_config["state"]["hdf5_selected_names"], custom_config["cameras"], show_data_analysis, lerobot_path, custom_config["outlier_deletion"], verbose)
         num_frames = state.shape[0]
 
         test_frames = {camera:[] for camera in imgs_per_cam.keys()}
