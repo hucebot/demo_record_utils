@@ -16,11 +16,15 @@ Please make sure to save the demonstration rosbags in a dedicated folder inside 
 ```
 |___task1
     |___episode1
-        |___teleop_result.db3
         |___metadata.yaml
+        |___teleop_result_0.db3
+        |___teleop_result_1.db3
+        ...
     |___episode2
-        |___teleop_result.db3
         |___metadata.yaml
+        |___teleop_result_0.db3
+        |___teleop_result_1.db3
+        ...
     ...
 |___task2
 ...

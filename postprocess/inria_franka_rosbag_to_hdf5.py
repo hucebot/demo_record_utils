@@ -17,7 +17,7 @@ from utils import (
 import subprocess
 
 
-def main(dataset_name, desired_dir, tasks_to_convert):
+def main(dataset_name, desired_dir, tasks_to_convert, verbose):
     start_time = time.time()
 
     # Read config file to get the selected topics
@@ -26,18 +26,17 @@ def main(dataset_name, desired_dir, tasks_to_convert):
     with open(dataset_path / "config.yaml", "r") as config_file:
         config = yaml.safe_load(config_file)
 
-    topic_names = []
-    hdf5_names = []
-    topic_args = []
+    selected_topics = {}
     for topic in config["selected_topics_conversion"]:
-        topic_args.append({})
+        topic_args = {}
         for key in topic.keys():
-            if key == "rosbag2_bag_topic_name":
-                topic_names.append(topic[key])
-            elif key == "hdf5_corresponding_name":
-                hdf5_names.append(topic[key])
-            else:
-                topic_args[-1][key] = topic[key]
+            if key != "from_rosbag_topic_name" and key != "hdf5_name":
+                topic_args[key] = topic[key]
+        
+        if topic["from_rosbag_topic_name"] in selected_topics.keys():
+            selected_topics[topic["from_rosbag_topic_name"]][topic["hdf5_name"]] = topic_args
+        else:
+            selected_topics[topic["from_rosbag_topic_name"]] = {topic["hdf5_name"]:topic_args}
 
     reference_topic_name = config["reference_topic_name"]
 
@@ -53,7 +52,7 @@ def main(dataset_name, desired_dir, tasks_to_convert):
     # Create one hdf5 dataset for each task independently
     for task in tasks_to_convert:
         #print(topic_names)
-        infos, fps_mean_task = create_task(dataset_path, desired_path, task, reference_topic_name, topic_names, hdf5_names, topic_args)
+        infos, fps_mean_task = create_task(dataset_path, desired_path, task, reference_topic_name, selected_topics, verbose=verbose)
         fps_tot_mean[task] = fps_mean_task
 
     # Create default config if there is none
@@ -76,6 +75,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--hdf5_dir", default="", help="name of the desired hdf5 dataset directory")
     parser.add_argument("--tasks", default=[], help="names of the tasks to convert", nargs='+')
+    parser.add_argument("--verbose", action="store_true", help="name of the desired hdf5 dataset directory")
     args = parser.parse_args()
 
     desired_dir = args.hdf5_dir
@@ -86,4 +86,4 @@ if __name__ == "__main__":
     if len(tasks) == 0:
         tasks = next(walk('./'+args.rosbag_folder))[1]
 
-    main(dataset_name=args.rosbag_folder, desired_dir=desired_dir, tasks_to_convert=tasks)
+    main(dataset_name=args.rosbag_folder, desired_dir=desired_dir, tasks_to_convert=tasks, verbose=args.verbose)

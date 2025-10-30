@@ -259,7 +259,13 @@ def load_raw_episode_data(
             imgcam = imgs_per_cam[cam].reshape(N, -1)
             img_dists[cam] = np.linalg.norm(np.diff(imgcam, 1, axis=0), axis=-1)
 
-        mean_dists = np.mean([np.mean([state_dists[key]/(1e-15+np.max(state_dists[key])) for key in state_dists.keys()], axis=0), np.mean([img_dists[key]/(1e-15+np.max(img_dists[key])) for key in imgs_per_cam.keys()], axis=0)], axis=0)
+        if state_dists:
+            mean_dists = np.mean([state_dists[key]/(1e-15+np.max(state_dists[key])) for key in state_dists.keys()], axis=0)
+            if img_dists:
+                mean_dists = np.mean([mean_dists, np.mean([img_dists[key]/(1e-15+np.max(img_dists[key])) for key in imgs_per_cam.keys()], axis=0)], axis=0)
+        else:
+            mean_dists = np.mean([img_dists[key]/(1e-15+np.max(img_dists[key])) for key in img_dists.keys()], axis=0)
+
 
         # Data post-processing
         action = np.concatenate(action, 1)

@@ -1,39 +1,41 @@
-reference_topic_name: /webcam1/image_raw/compressed
+reference_topic_name: /cartesian_impedance/joint_state
 
 selected_topics_conversion:
   
   # OBSERVATION
   # Vision
-  - rosbag2_bag_topic_name: /camera/camera/color/image_raw/compressed
-    hdf5_corresponding_name: observations/gripper_camera
-  - rosbag2_bag_topic_name: /webcam1/image_raw/compressed
-    hdf5_corresponding_name: observations/front_cam1
-  #- rosbag2_bag_topic_name: /webcam2/image_raw/compressed
-  #  hdf5_corresponding_name: observations/front_cam2
-  #- rosbag2_bag_topic_name: /webcam3/image_raw/compressed
-  #  hdf5_corresponding_name: observations/front_cam3
+  #- hdf5_name: observations/gripper_camera
+  #  from_rosbag_topic_name: /camera/camera/color/image_raw/compressed
+  #- hdf5_name: observations/front_cam1
+  #  from_rosbag_topic_name: /webcam1/image_raw/compressed
+  #- hdf5_name: observations/front_cam2
+  #  from_rosbag_topic_name: /webcam2/image_raw/compressed
+  #- hdf5_name: observations/front_cam3
+  #  from_rosbag_topic_name: /webcam3/image_raw/compressed
 
-  # Robot state
-  - rosbag2_bag_topic_name: /cartesian_impedance/joint_pos
-    hdf5_corresponding_name: observations/joint_pos
-    joint_type: position
-  - rosbag2_bag_topic_name: /cartesian_impedance/joint_vel
-    hdf5_corresponding_name: observations/joint_vel
-    joint_type: velocity
-  - rosbag2_bag_topic_name: /panda_gripper/width
-    hdf5_corresponding_name: observations/gripper_width
+  # Kinematic robot state
+  - hdf5_name: observations/joint_pos
+    from_rosbag_topic_name: /cartesian_impedance/joint_state
+    physical_quantity: position
+  - hdf5_name: observations/joint_vel
+    from_rosbag_topic_name: /cartesian_impedance/joint_state
+    physical_quantity: velocity
+  - hdf5_name: observations/gripper_width
+    from_rosbag_topic_name: /panda_gripper/width
 
   # Force-feedback
-  - rosbag2_bag_topic_name: /cartesian_impedance/f_ext_cart
-    hdf5_corresponding_name: observations/f_ext
-  - rosbag2_bag_topic_name: /cartesian_impedance/joint_torques
-    hdf5_corresponding_name: observations/joint_torques
-    joint_type: effort
+  - hdf5_name: observations/ee_force
+    from_rosbag_topic_name: /cartesian_impedance/f_ext_cart
+    physical_quantity: force
+  - hdf5_name: observations/ee_torque
+    from_rosbag_topic_name: /cartesian_impedance/f_ext_cart
+    physical_quantity: torque
+  - hdf5_name: observations/joint_torques
+    from_rosbag_topic_name: /cartesian_impedance/joint_state
+    physical_quantity: effort
 
   # ACTION
-  #- rosbag2_bag_topic_name: /cartesian_impedance/cartesian_pos_des_filt
-  #  hdf5_corresponding_name: actions/desired_joint_pos
-  - rosbag2_bag_topic_name: /cartesian_impedance/joint_pos
-    hdf5_corresponding_name: actions/desired_joint_pos
-    joint_type: position
-    future: True
+  - hdf5_name: actions/desired_ee_pos
+    from_rosbag_topic_name: /cartesian_impedance/cartesian_pos_des_filt
+  - hdf5_name: actions/desired_gripper_width
+    from_rosbag_topic_name: /panda_gripper/gripper_command
