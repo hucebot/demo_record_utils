@@ -111,7 +111,7 @@ def fixed_compressed_imgmsg_to_cv2(cmprs_img_msg, desired_encoding="passthrough"
     return res
 
 
-def extractImage(bagpath, topic_name, verbose=False):
+def extractImage(bagpath, topic_name, conversion_args, verbose=False):
     """Extract images from topic of type sensor_msgs/Image as numpy array"""
     if verbose:
         print(f"Extracting '{topic_name}' from '{bagpath}'")
@@ -146,7 +146,7 @@ def extractImage(bagpath, topic_name, verbose=False):
             print("image_times", image_times.shape)
             print("images", images.shape)
 
-        return image_times, images
+        return image_times, [images]
 
 
 def extractAndEncodeImage(bagpath, topic_name, verbose=False):
@@ -400,7 +400,7 @@ def extractGripperFromPointStamped(bagpath, topic_name, conversion_args, verbose
 def extractGripperWidth(bagpath, topic_name, conversion_args, verbose=False):
     """Extract gripper width from topic of type custom_msgs/msg/GripperWidth as numpy array"""
     if verbose:
-        print(f"Extracting '{topic_name}' from '{bagpath}'")
+        print(f"Extracting gripper width '{topic_name}' from '{bagpath}'")
 
     # Create a type store to use if the bag has no message definitions.
     typestore = get_typestore(Stores.ROS2_HUMBLE)
@@ -410,6 +410,11 @@ def extractGripperWidth(bagpath, topic_name, conversion_args, verbose=False):
     # Create reader instance and open for reading.
     with AnyReader([bagpath], default_typestore=typestore) as reader:
         connections = [x for x in reader.connections if x.topic == topic_name]
+
+        if not connections:
+            if verbose:
+                print(f"Topic '{topic_name}' not found. Returning zeros.")
+            return None, [None]
 
         times = []
         data = []
@@ -559,34 +564,32 @@ def extract_topic(topic_type, bagpaths, topic_name, topic_conversions, verbose=T
     conversion_args = [topic_conversions[hdf5_name] for hdf5_name in topic_conversions.keys()]
     timestamps, results = [], [[] for _ in conversion_args]
     for bagpath in bagpaths:
+        timestamp, result = None, None
         if topic_type == "sensor_msgs/msg/CompressedImage":
             timestamp, result = extractCompressedImage(bagpath, topic_name, conversion_args, verbose=verbose)
-            timestamps.append(timestamp)
-            for i in range(len(conversion_args)):
-                results[i].append(result[i])
         elif topic_type == "sensor_msgs/msg/JointState":
             timestamp, result = extractJointState(bagpath, topic_name, conversion_args, verbose=verbose)
-            timestamps.append(timestamp)
-            for i in range(len(conversion_args)):
-                results[i].append(result[i])
         elif topic_type == "geometry_msgs/msg/PoseStamped":
             timestamp, result = extractPoseStamped(bagpath, topic_name, conversion_args, verbose=verbose)
-            timestamps.append(timestamp)
-            for i in range(len(conversion_args)):
-                results[i].append(result[i])
         elif topic_type == "geometry_msgs/msg/WrenchStamped":
             timestamp, result = extractWrenchStamped(bagpath, topic_name, conversion_args, verbose=verbose)
-            timestamps.append(timestamp)
-            for i in range(len(conversion_args)):
-                results[i].append(result[i])
         elif topic_type == "custom_msgs/msg/GripperWidth":
             timestamp, result = extractGripperWidth(bagpath, topic_name, conversion_args, verbose=verbose)
-            timestamps.append(timestamp)
-            for i in range(len(conversion_args)):
-                results[i].append(result[i])
+        elif topic_type == "sensor_msgs/msg/Image":
+            timestamp, result = extractImage(bagpath, topic_name, conversion_args, verbose=verbose)
         else:
-            raise NotImplementedError
+            raise NotImplementedError(f"The topic type {topic_type} is not recognized")
         
+        if timestamp is None:
+            timestamps.append(timestamps[-1][None,-1])
+        else:
+            timestamps.append(timestamp)
+        for i in range(len(conversion_args)):
+            if result[i] is None:
+                results[i].append(results[i][-1][None,-1])
+            else:
+                results[i].append(result[i])
+    
     result = [pad_and_concatenate(results[idx], axis=0) for idx in range(len(results))]
     timestamp = np.concatenate(timestamps, axis=0)
 
@@ -641,7 +644,7 @@ def create_default_config(fps_used, infos, dir):
                 "lerobot_names": state_names_fts, 
                 "hdf5_selected_names":state_names
                 },  
-            "cameras":{new_cam_name: cam_name for new_cam_name, cam_name in zip(cameras_new_names, cameras_names)}
+            "cameras":{new_cam_name: {"name":cam_name} for new_cam_name, cam_name in zip(cameras_new_names, cameras_names)}
         }
         yaml.dump(new_config_dico, config_file, default_flow_style=False)
 

@@ -4,14 +4,14 @@ selected_topics_conversion:
   
   # OBSERVATION
   # Vision
-  #- hdf5_name: observations/gripper_camera
-  #  from_rosbag_topic_name: /camera/camera/color/image_raw/compressed
-  #- hdf5_name: observations/front_cam1
-  #  from_rosbag_topic_name: /webcam1/image_raw/compressed
-  #- hdf5_name: observations/front_cam2
-  #  from_rosbag_topic_name: /webcam2/image_raw/compressed
-  #- hdf5_name: observations/front_cam3
-  #  from_rosbag_topic_name: /webcam3/image_raw/compressed
+  - hdf5_name: observations/gripper_camera
+    from_rosbag_topic_name: /camera/camera/color/image_raw/compressed
+  - hdf5_name: observations/front_cam1
+    from_rosbag_topic_name: /webcam1/image_raw/compressed
+  - hdf5_name: observations/front_cam2
+    from_rosbag_topic_name: /webcam2/image_raw/compressed
+  - hdf5_name: observations/front_cam3
+    from_rosbag_topic_name: /webcam3/image_raw/compressed
 
   # Kinematic robot state
   - hdf5_name: observations/joint_pos

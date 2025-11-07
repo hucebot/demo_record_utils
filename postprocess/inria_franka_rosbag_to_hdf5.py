@@ -84,6 +84,6 @@ if __name__ == "__main__":
 
     tasks = args.tasks
     if len(tasks) == 0:
-        tasks = next(walk('./'+args.rosbag_folder))[1]
+        tasks = next(walk(args.rosbag_folder))[1]
 
     main(dataset_name=args.rosbag_folder, desired_dir=desired_dir, tasks_to_convert=tasks, verbose=args.verbose)
