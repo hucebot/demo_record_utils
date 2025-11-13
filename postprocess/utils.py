@@ -618,7 +618,7 @@ def create_default_config(fps_used, infos, dir):
 
             if len(ft_ex.shape) < 2:
                 ft_ex = cv2.imdecode(ft_ex, cv2.IMREAD_COLOR)
-            width, height = ft_ex.shape[:2]
+            height, width = ft_ex.shape[:2]
             cam_widths.append(width)
             cam_heights.append(height)
         else:
