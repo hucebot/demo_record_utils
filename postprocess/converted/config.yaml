@@ -12,9 +12,34 @@ action:
   - desired_ee_pos_5
   - desired_ee_pos_6
   - desired_gripper_width_0
-cameras: {}
+cameras:
+  front_cam1:
+    channels: 3
+    height: 480
+    name: observations/front_cam1
+    width: 640
+  front_cam2:
+    channels: 3
+    height: 480
+    name: observations/front_cam2
+    width: 640
+  front_cam3:
+    channels: 3
+    height: 480
+    name: observations/front_cam3
+    width: 640
+  gripper_camera:
+    channels: 3
+    height: 480
+    name: observations/gripper_camera
+    width: 640
+  gripper_camera_depth:
+    channels: 3
+    height: 480
+    name: observations/gripper_camera_depth
+    width: 640
 fps_used:
-  clean_dummy_log: 90.51447296142578
+  debug: 30.187585830688477
 outlier_deletion: false
 state:
   hdf5_selected_names:

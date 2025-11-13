@@ -604,21 +604,26 @@ def create_default_config(fps_used, infos, dir):
     # Default selection of topics in three categories : actions, states, cameras
     action_name, state_name = "motor", "motor"
     action_names, state_names, cameras_names = [], [], []
-    action_dims, state_dims, cameras_new_names = [], [], []
+    action_dims, state_dims, cam_widths, cam_heights = [], [], [], []
     for v in infos:
-        hdf5_name, ft_dim = v["hdf5_name"], v["ft_dim"]
+        hdf5_name, ft_ex = v["hdf5_name"], v["ft_example"]
 
         if "action" in hdf5_name:
             action_names.append(hdf5_name)
-            action_dims.append(ft_dim)
+            action_dims.append(ft_ex.shape[0])
             if "joint" in hdf5_name:
                 action_name = "joint"
         elif "cam" in hdf5_name:
             cameras_names.append(hdf5_name)
-            cameras_new_names.append(hdf5_name.split("/")[-1])
+
+            if len(ft_ex.shape) < 2:
+                ft_ex = cv2.imdecode(ft_ex, cv2.IMREAD_COLOR)
+            width, height = ft_ex.shape[:2]
+            cam_widths.append(width)
+            cam_heights.append(height)
         else:
             state_names.append(hdf5_name)
-            state_dims.append(ft_dim)
+            state_dims.append(ft_ex.shape[0])
             if "joint" in hdf5_name:
                 state_name = "joint"
 
@@ -644,7 +649,7 @@ def create_default_config(fps_used, infos, dir):
                 "lerobot_names": state_names_fts, 
                 "hdf5_selected_names":state_names
                 },  
-            "cameras":{new_cam_name: {"name":cam_name} for new_cam_name, cam_name in zip(cameras_new_names, cameras_names)}
+            "cameras":{cam_name.split("/")[-1]: {"name":cam_name, "width":cam_width, "height":cam_height, "channels":3} for cam_width, cam_height, cam_name in zip(cam_widths, cam_heights, cameras_names)}
         }
         yaml.dump(new_config_dico, config_file, default_flow_style=False)
 
@@ -671,7 +676,7 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
             if str(file)[-4:] == ".db3":
                 bagpaths.append(file.resolve())
 
-            elif str(file)[-5:] == ".yaml" or str(file)[-4:] == ".yml":
+            elif str(file)[-13:] == "metadata.yaml" or str(file)[-12:] == "metadata.yml":
                 # Read metadata file to get each topic and its type
                 with open(file, "r") as metadata_file:
                     metadata = yaml.safe_load(metadata_file)
@@ -687,6 +692,8 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
         
         # Sort to get everything in the right order
         bagpaths = sorted(bagpaths, key=lambda p: int(p.stem.split('_')[-1]))
+
+        print({k for k in topic_types.keys()}, {k for k in selected_topics.keys()})
 
         # Search for reference topic
         reference_topic_times = None
@@ -730,7 +737,7 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
                     if demo_idx == 0:
                         infos.append({})
                         infos[-1]["hdf5_name"] = hdf5_name
-                        infos[-1]["ft_dim"] = topic_data[hdf5_name].shape[1]
+                        infos[-1]["ft_example"] = topic_data[hdf5_name][0]
 
                     group.create_dataset(hdf5_name, data=synch_topic_data[hdf5_name])
 

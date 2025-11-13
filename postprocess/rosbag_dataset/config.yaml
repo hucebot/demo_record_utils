@@ -1,4 +1,4 @@
-reference_topic_name: /cartesian_impedance/joint_state
+reference_topic_name: /camera/camera/depth/image_rect_raw
 
 selected_topics_conversion:
   
@@ -12,6 +12,8 @@ selected_topics_conversion:
     from_rosbag_topic_name: /webcam2/image_raw/compressed
   - hdf5_name: observations/front_cam3
     from_rosbag_topic_name: /webcam3/image_raw/compressed
+  - hdf5_name: observations/gripper_camera_depth
+    from_rosbag_topic_name: /camera/camera/depth/image_rect_raw
 
   # Kinematic robot state
   - hdf5_name: observations/joint_pos
