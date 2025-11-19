@@ -98,7 +98,11 @@ def find_lower_outlier(x):
 
         print(new_last_dec_idx, len(Femp)//2, "gamma : ", gamma, "last idx : ", last_dec_idx)
 
-    return np.sort(sorted_idx[:last_dec_idx[1]])
+        val_flag = (last_dec_idx[1] - last_dec_idx[0]) / (gamma[1] - gamma[0])
+        if val_flag > 40000:
+            break
+
+    return np.sort(sorted_idx[:last_dec_idx[0]+1])
 
 def process_image(data, width, height, uncompressed):
     if uncompressed:
@@ -225,11 +229,15 @@ class ConverterToLeRobotDataset():
                     
                     if outlier_deletion:
                         out_indices = find_lower_outlier(self.mean_dists)
-
                         for loading_batch_idx in range(num_iters):
                             self.add_batch_raw_episode_data(loading_batch_idx*self.loading_batch_size, (loading_batch_idx+1)*self.loading_batch_size, file, task, ep, show_data_analysis, out_indices=out_indices)
 
                         self.add_batch_raw_episode_data(num_iters*self.loading_batch_size, num_frames, file, task, ep, show_data_analysis, out_indices=out_indices)
+
+                        if show_data_analysis:
+                            self.save_data_analysis(ep, out_indices)
+                    elif show_data_analysis:
+                        self.save_data_analysis(ep, None)
 
                     if self.verbose:
                         self.dataset.save_episode()
@@ -270,22 +278,20 @@ class ConverterToLeRobotDataset():
         imgs_per_cam = self.load_raw_images_per_camera(start, end, file, ep)
 
         # Data analysis
-
-        # Save last for possible next data analysis
-        self.last_state = [stt[None, -1] for stt in state]
-        self.last_img_per_cam = {cam:imgs_per_cam[cam][None, -1] for cam in imgs_per_cam.keys()}
-
+        # If we are trying to detect the outliers, we only need to compute the stats
         if outlier_deletion and (out_indices is None):
             self.compute_state_and_img_dists(state, imgs_per_cam)
 
             if self.verbose:
                 print("data analysis finished for batch", start, ":", end)
+        # Otherwise, we build the actual converted dataset
         else:
-            if show_data_analysis:
+            # If outlier_deletion is False but we still want data analysis, we need to compute the stats
+            if show_data_analysis and (out_indices is None):
                 self.compute_state_and_img_dists(state, imgs_per_cam)
 
                 if self.verbose:
-                    print("data analysis finished")
+                    print("data analysis finished for batch", start, ":", end)
 
             # Data post-processing
             action = np.concatenate(action, 1)
@@ -298,9 +304,9 @@ class ConverterToLeRobotDataset():
                     imgs_per_cam[cam] = np.concatenate([imgs_per_cam[cam][out_indices[i]+1:out_indices[i+1]] for i in range(len(out_indices)-1)]+[imgs_per_cam[cam][out_indices[-1]+1:]], axis=0)
 
                 if self.verbose:
-                    print("data processing finished")
+                    print("data processing finished for batch", start, ":", end)
 
-            for i in range(end-start):
+            for i in range(state.shape[0]):
                 frame = {
                     "observation.state": state[i],
                     "action": action[i],
@@ -335,49 +341,59 @@ class ConverterToLeRobotDataset():
 
             self.img_dists[cam].append(np.linalg.norm(np.diff(imgcam, 1, axis=0), axis=-1))
 
-            self.last_img_per_cam[cam] = imgcam[cam][None, -1]
+            self.last_img_per_cam[cam] = imgcam[None, -1]
 
     def compute_mean_dists(self):
         if self.state_dists:
+            for key in self.state_dists.keys():
+                self.state_dists[key] = np.concatenate(self.state_dists[key], axis=0)
+
             self.mean_dists = np.mean([self.state_dists[key]/(1e-15+np.max(self.state_dists[key])) for key in self.state_dists.keys()], axis=0)
             if self.img_dists:
+                for key in self.img_dists.keys():
+                    self.img_dists[key] = np.concatenate(self.img_dists[key], axis=0)
+
                 self.mean_dists = np.mean([self.mean_dists, np.mean([self.img_dists[key]/(1e-15+np.max(self.img_dists[key])) for key in self.img_dists.keys()], axis=0)], axis=0)
         else:
+            for key in self.img_dists.keys():
+                self.img_dists[key] = np.concatenate(self.img_dists[key], axis=0)
+
             self.mean_dists = np.mean([self.img_dists[key]/(1e-15+np.max(self.img_dists[key])) for key in self.img_dists.keys()], axis=0)
     
-    def save_data_analysis(self, ep):
-        
+    def save_data_analysis(self, ep, out_indices):
         outlier_deletion = self.custom_config["outlier_deletion"]
         os.mkdir(self.lerobot_path / "data analysis" / str(ep))
 
-        for state_ft_name in state_dists.keys():
+        for state_ft_name in self.state_dists.keys():
+            if self.verbose:
+                print("state dist shape :", self.state_dists[state_ft_name].shape)
             if outlier_deletion:
-                plt.scatter(out_indices, state_dists[state_ft_name][out_indices])
-            plt.plot(state_dists[state_ft_name])
+                plt.scatter(out_indices, self.state_dists[state_ft_name][out_indices])
+            plt.plot(self.state_dists[state_ft_name])
             plt.savefig(self.lerobot_path / "data analysis" / str(ep) / (state_ft_name.split("/")[-1]+".png"), bbox_inches="tight")
             plt.close()
 
             if self.verbose:
                 print("Data analysis plot saved as", self.lerobot_path / "data analysis" / str(ep) / (state_ft_name.split("/")[-1]+".png"))
 
-        for cam in imgs_per_cam.keys():
+        for cam in self.img_dists.keys():
             if outlier_deletion:
-                plt.scatter(out_indices, img_dists[cam][out_indices])
-            plt.plot(img_dists[cam])
+                plt.scatter(out_indices, self.img_dists[cam][out_indices])
+            plt.plot(self.img_dists[cam])
             plt.savefig(self.lerobot_path / "data analysis" / str(ep) / (cam+".png"), bbox_inches="tight")
             plt.close()
 
             if self.verbose:
                 print("Data analysis plot saved as", self.lerobot_path / "data analysis" / str(ep) / (cam+".png"))
 
-        labels = [key for key in state_dists.keys()]+[key for key in img_dists.keys()]
-        x = np.concatenate([state_dists[key][:,None] for key in state_dists.keys()] + [img_dists[key][:,None] for key in img_dists.keys()], axis=1)
+        labels = [key for key in self.state_dists.keys()]+[key for key in self.img_dists.keys()]
+        x = np.concatenate([self.state_dists[key][:,None] for key in self.state_dists.keys()] + [self.img_dists[key][:,None] for key in self.img_dists.keys()], axis=1)
 
         self.plot_spearman_matrix(ep, x, labels)
 
         if outlier_deletion:
-            plt.scatter(out_indices, mean_dists[out_indices])
-        plt.plot(mean_dists, label="total state distance")
+            plt.scatter(out_indices, self.mean_dists[out_indices])
+        plt.plot(self.mean_dists, label="total state distance")
         plt.legend(loc="best")
         plt.savefig(self.lerobot_path / "data analysis" / str(ep) / ("total_state.png"), bbox_inches="tight")
         plt.close()
@@ -398,14 +414,14 @@ class ConverterToLeRobotDataset():
         plt.savefig(self.lerobot_path / "data analysis" / str(ep) / ("spearman_matrix.png"), bbox_inches="tight")
         plt.close()
 
-    def load_raw_images_per_camera(self, start, end, hd5_file: h5py.File, ep: int, verbose) -> dict[str, np.ndarray]:
+    def load_raw_images_per_camera(self, start, end, hd5_file: h5py.File, ep: int) -> dict[str, np.ndarray]:
         imgs_per_cam = {}
         camera_dict = self.custom_config["cameras"]
-        if verbose:
+        if self.verbose:
             print("Processing images")
         for camera in camera_dict.keys():
             width, height, channel = camera_dict[camera]["width"], camera_dict[camera]["height"], camera_dict[camera]["channels"]
-            if verbose:
+            if self.verbose:
                 print("Processing camera", camera, " with (re)shape (", width, height, channel, ")")
             uncompressed = hd5_file[f"{ep:03d}/"+camera_dict[camera]["name"]].ndim == 4
             imgs_per_cam[camera] = []
@@ -413,7 +429,7 @@ class ConverterToLeRobotDataset():
                 imgs_per_cam[camera].append(process_image(img, width, height, uncompressed))
             imgs_per_cam[camera] = np.array(imgs_per_cam[camera])
 
-        if verbose:
+        if self.verbose:
             print("finished the processing")
         return imgs_per_cam
 
@@ -430,6 +446,7 @@ def port_inria_franka(
     dataset_config: DatasetConfig = DEFAULT_DATASET_CONFIG,
     show_data_analysis: bool = False,
     verbose=False,
+    loading_batch_size=1024,
 ):
     if (HF_LEROBOT_HOME / repo_id).exists():
         shutil.rmtree(HF_LEROBOT_HOME / repo_id)
@@ -451,11 +468,11 @@ def port_inria_franka(
         for key in f.keys():
             episodes.append(int(key))
 
-    converter = ConverterToLeRobotDataset(repo_id, task, "franka", config, mode=mode, dataset_config=dataset_config, verbose=verbose)
+    converter = ConverterToLeRobotDataset(repo_id, task, "franka", config, mode=mode, dataset_config=dataset_config, verbose=verbose, loading_batch_size=loading_batch_size)
 
-    converter.populate(task, hdf5_folder_path / hdf5_dataset_name, episodes, show_data_analysis=show_data_analysis, verbose=verbose)
+    converter.populate(task, hdf5_folder_path / hdf5_dataset_name, episodes, show_data_analysis=show_data_analysis)
 
-    subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME], check=True)
+    subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME / repo_id], check=True)
 
     if push_to_hub:
         converter.dataset.push_to_hub()

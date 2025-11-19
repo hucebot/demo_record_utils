@@ -10,7 +10,7 @@ Utility functions for demo recording and post-processing.
 Build docker image and run the container using the utility scripts `build_docker.sh` and `run_docker.sh`.
 
 The `postprocess` folder will be mounted on the container and it is the container's start directory.
-Please make sure to save the demonstration rosbags in a dedicated folder inside `postprocess` following the structure :
+Please make sure to save the demonstration rosbags in a dedicated folder following the structure :
 
 `<dataset-name>`
 ```
@@ -33,7 +33,7 @@ Please make sure to save the demonstration rosbags in a dedicated folder inside 
 
 ### rosbags -> HDF5
 
-The script `inria_franka_rosbag_to_hdf5.py` converts manipulation demos (inside the folder `<dataset-name>`) into a HDF5 file.
+The script `inria_franka_rosbag_to_hdf5.py` converts manipulation demos (inside the folder `<dataset-name>`) into a HDF5 file according to the given config file (an example is provided in `<postprocess/rosbag_dataset>`).
 
 ```bash
 python inria_franka_rosbag_to_hdf5.py --rosbag_folder <dataset-name> --hdf5_dir <dataset-name>_converted --tasks task1 task2 ... taskn
@@ -43,7 +43,7 @@ This will create an HDF5 file named `<task>.h5` for each given `<task>` and a de
 
 ### HDF5 -> LeRobot
 
-It is possible to create a LeRobot dataset based on an HDF5 dataset, using the script `inria_franka_hdf5_to_lerobot.py`.
+It is possible to create a LeRobot dataset based on an HDF5 dataset, using the script `inria_franka_hdf5_to_lerobot.py`. It will convert the HDF5 file according to the config file in `hdf5-folder-path` (an example is provided in `<postprocess/converted>`).
 
 ```bash
 python inria_franka_hdf5_to_lerobot.py --hdf5-folder-path <dataset-name>_converted --hdf5-dataset-name <dataset-name>.h5 --repo_id <org>/<dataset-name>_converted --task <task-name>
