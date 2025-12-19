@@ -693,7 +693,9 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
         # Sort to get everything in the right order
         bagpaths = sorted(bagpaths, key=lambda p: int(p.stem.split('_')[-1]))
 
-        print({k for k in topic_types.keys()}, {k for k in selected_topics.keys()})
+        if verbose:
+            print("available topic types :", {k for k in topic_types.keys()})
+            print("selected topic types :", {k for k in selected_topics.keys()})
 
         # Search for reference topic
         reference_topic_times = None
