@@ -599,59 +599,69 @@ def extract_topic(topic_type, bagpaths, topic_name, topic_conversions, verbose=T
     return timestamp, {hdf5_name:result[idx] for idx, hdf5_name in enumerate(topic_conversions.keys())}
 
 ### CREATION UTILS ### 
-def create_default_config(fps_used, infos, dir):
-    
-    # Default selection of topics in three categories : actions, states, cameras
-    action_name, state_name = "motor", "motor"
-    action_names, state_names, cameras_names = [], [], []
-    action_dims, state_dims, cam_widths, cam_heights = [], [], [], []
-    for v in infos:
-        hdf5_name, ft_ex = v["hdf5_name"], v["ft_example"]
+def add_config(fps_used, infos, dir, default=False):
 
-        if "action" in hdf5_name:
-            action_names.append(hdf5_name)
-            action_dims.append(ft_ex.shape[0])
-            if "joint" in hdf5_name:
-                action_name = "joint"
-        elif "cam" in hdf5_name:
-            cameras_names.append(hdf5_name)
+    if default:
+        # Default selection of topics in three categories : actions, states, cameras
+        action_name, state_name = "motor", "motor"
+        action_names, state_names, cameras_names = [], [], []
+        action_dims, state_dims, cam_widths, cam_heights = [], [], [], []
+        for v in infos:
+            hdf5_name, ft_ex = v["hdf5_name"], v["ft_example"]
 
-            if len(ft_ex.shape) < 2:
-                ft_ex = cv2.imdecode(ft_ex, cv2.IMREAD_COLOR)
-            height, width = ft_ex.shape[:2]
-            cam_widths.append(width)
-            cam_heights.append(height)
-        else:
-            state_names.append(hdf5_name)
-            state_dims.append(ft_ex.shape[0])
-            if "joint" in hdf5_name:
-                state_name = "joint"
+            if "action" in hdf5_name:
+                action_names.append(hdf5_name)
+                action_dims.append(ft_ex.shape[0])
+                if "joint" in hdf5_name:
+                    action_name = "joint"
+            elif "cam" in hdf5_name:
+                cameras_names.append(hdf5_name)
 
-    with open(dir, "w") as config_file:
-        action_names_fts = []
-        for i, act_name in enumerate(action_names):
-            action_names_fts += [act_name.split("/")[-1]+"_"+str(j) for j in range(action_dims[i])]
+                if len(ft_ex.shape) < 2:
+                    ft_ex = cv2.imdecode(ft_ex, cv2.IMREAD_COLOR)
+                height, width = ft_ex.shape[:2]
+                cam_widths.append(width)
+                cam_heights.append(height)
+            else:
+                state_names.append(hdf5_name)
+                state_dims.append(ft_ex.shape[0])
+                if "joint" in hdf5_name:
+                    state_name = "joint"
 
-        state_names_fts = []
-        for i, state_name in enumerate(state_names):
-            state_names_fts += [state_name.split("/")[-1]+"_"+str(j) for j in range(state_dims[i])]
+        with open(dir, "w") as config_file:
+            action_names_fts = []
+            for i, act_name in enumerate(action_names):
+                action_names_fts += [act_name.split("/")[-1]+"_"+str(j) for j in range(action_dims[i])]
 
-        new_config_dico = {
-            "fps_used":fps_used,
-            "outlier_deletion": False,
-            "action":{
-                "lerobot_name": action_name, 
-                "lerobot_names": action_names_fts, 
-                "hdf5_selected_names":action_names 
-                }, 
-            "state":{
-                "lerobot_name": state_name, 
-                "lerobot_names": state_names_fts, 
-                "hdf5_selected_names":state_names
-                },  
-            "cameras":{cam_name.split("/")[-1]: {"name":cam_name, "width":cam_width, "height":cam_height, "channels":3} for cam_width, cam_height, cam_name in zip(cam_widths, cam_heights, cameras_names)}
-        }
-        yaml.dump(new_config_dico, config_file, default_flow_style=False)
+            state_names_fts = []
+            for i, state_name in enumerate(state_names):
+                state_names_fts += [state_name.split("/")[-1]+"_"+str(j) for j in range(state_dims[i])]
+
+            new_config_dico = {
+                "fps_used":fps_used,
+                "outlier_deletion": False,
+                "action":{
+                    "lerobot_name": action_name, 
+                    "lerobot_names": action_names_fts, 
+                    "hdf5_selected_names":action_names 
+                    }, 
+                "state":{
+                    "lerobot_name": state_name, 
+                    "lerobot_names": state_names_fts, 
+                    "hdf5_selected_names":state_names
+                    },  
+                "cameras":{cam_name.split("/")[-1]: {"name":cam_name, "width":cam_width, "height":cam_height, "channels":3} for cam_width, cam_height, cam_name in zip(cam_widths, cam_heights, cameras_names)}
+            }
+            yaml.dump(new_config_dico, config_file, default_flow_style=False)
+    else:
+        with open(dir) as f:
+            list_doc = yaml.safe_load(f)
+
+        for task in fps_used:
+            list_doc["fps_used"][task] = fps_used[task]
+
+        with open(dir, "w") as f:
+            yaml.dump(list_doc, f, default_flow_style=False)
 
 def create_task(dataset_path, desired_path, task, reference_topic_name, selected_topics, verbose=False):
 

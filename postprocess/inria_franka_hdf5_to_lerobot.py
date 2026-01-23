@@ -64,7 +64,7 @@ def spearman_coefficient_matrix(x, y):
 
     return cov_rxry/np.sqrt(var_ry*var_rx)
 
-def find_lower_outlier(x):
+def find_lower_outlier(x, verbose=False):
     """
     Parameters :
     x : Array of positive floats and shape (N,)
@@ -96,7 +96,8 @@ def find_lower_outlier(x):
         else:
             gamma[1] = (gamma[1]+gamma[0])/2
 
-        print(new_last_dec_idx, len(Femp)//2, "gamma : ", gamma, "last idx : ", last_dec_idx)
+        if verbose:
+            print(new_last_dec_idx, len(Femp)//2, "gamma : ", gamma, "last idx : ", last_dec_idx)
 
         val_flag = (last_dec_idx[1] - last_dec_idx[0]) / (gamma[1] - gamma[0])
         if val_flag > 40000:
@@ -228,7 +229,7 @@ class ConverterToLeRobotDataset():
                         self.compute_mean_dists()
                     
                     if outlier_deletion:
-                        out_indices = find_lower_outlier(self.mean_dists)
+                        out_indices = find_lower_outlier(self.mean_dists, self.verbose)
                         for loading_batch_idx in range(num_iters):
                             self.add_batch_raw_episode_data(loading_batch_idx*self.loading_batch_size, (loading_batch_idx+1)*self.loading_batch_size, file, task, ep, show_data_analysis, out_indices=out_indices)
 

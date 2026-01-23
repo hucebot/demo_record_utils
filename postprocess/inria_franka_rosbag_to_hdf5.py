@@ -11,7 +11,7 @@ import yaml
 
 from utils import (
     create_task,
-    create_default_config,
+    add_config,
 )
 
 import subprocess
@@ -57,7 +57,7 @@ def main(dataset_name, desired_dir, tasks_to_convert, verbose):
 
     # Create default config if there is none
     if (desired_path / "config.yaml").exists() == False:
-        create_default_config(fps_tot_mean, infos, desired_path / "config.yaml")
+        add_config(fps_tot_mean, infos, desired_path / "config.yaml")
 
     subprocess.run(["chmod", "-R", "777", desired_path], check=True)
 
