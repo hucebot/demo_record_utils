@@ -57,6 +57,8 @@ def main(dataset_name, desired_dir, tasks_to_convert, verbose):
 
     # Create default config if there is none
     if (desired_path / "config.yaml").exists() == False:
+        add_config(fps_tot_mean, infos, desired_path / "config.yaml", default=True)
+    else:
         add_config(fps_tot_mean, infos, desired_path / "config.yaml")
 
     subprocess.run(["chmod", "-R", "777", desired_path], check=True)

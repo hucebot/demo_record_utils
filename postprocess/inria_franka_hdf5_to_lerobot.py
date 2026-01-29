@@ -175,8 +175,8 @@ class ConverterToLeRobotDataset():
                 ],
             }
 
-        if Path(root / repo_id).exists():
-            shutil.rmtree(root / repo_id)
+        while Path(root / repo_id).exists():
+            repo_id += "_twin"
         
         self.dataset = LeRobotDataset.create(
         repo_id=repo_id,
@@ -449,9 +449,6 @@ def port_inria_franka(
     verbose=False,
     loading_batch_size=1024,
 ):
-    if (HF_LEROBOT_HOME / repo_id).exists():
-        shutil.rmtree(HF_LEROBOT_HOME / repo_id)
-
     config = None
     with open(hdf5_folder_path / "config.yaml") as f:
         config = yaml.safe_load(f)
