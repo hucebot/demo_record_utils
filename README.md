@@ -74,9 +74,8 @@ Prepare your data for training by converting HDF5 files into the [LeRobot](https
 ```bash
 python inria_franka_hdf5_to_lerobot.py \
     --hdf5-folder-path <dataset-name>_converted \
-    --hdf5-dataset-name <dataset-name>.h5 \
-    --repo_id <org>/<dataset-name>_converted \
-    --task <task-name>
+    --repo-folder-path <lerobot-name> \
+    --tasks task1 task2
 ```
 
 **Default Local Path:** `/postprocess/lerobot` (configured via `HF_LEROBOT_HOME`).

@@ -210,44 +210,44 @@ class ConverterToLeRobotDataset():
         with h5py.File(hdf5_path, "r") as file:
             for ep in tqdm.tqdm(episodes):
                     
-                    if show_data_analysis or outlier_deletion:
-                        self.state_dists, self.img_dists, self.mean_dists = {key:[] for key in state_ft_list}, {key:[] for key in camera_keys}, []
-                        self.last_state, self.last_img_per_cam = None, {}
+                if show_data_analysis or outlier_deletion:
+                    self.state_dists, self.img_dists, self.mean_dists = {key:[] for key in state_ft_list}, {key:[] for key in camera_keys}, []
+                    self.last_state, self.last_img_per_cam = None, {}
 
-                    num_frames = file[f"{ep:03d}/"+self.custom_config["state"]["hdf5_selected_names"][-1]][:].shape[0]
+                num_frames = file[f"{ep:03d}/"+self.custom_config["state"]["hdf5_selected_names"][-1]][:].shape[0]
 
-                    if self.verbose:
-                        print(f"adding {num_frames} frames")
+                if self.verbose:
+                    print(f"adding {num_frames} frames")
 
-                    num_iters = num_frames//self.loading_batch_size
+                num_iters = num_frames//self.loading_batch_size
+                for loading_batch_idx in range(num_iters):
+                    self.add_batch_raw_episode_data(loading_batch_idx*self.loading_batch_size, (loading_batch_idx+1)*self.loading_batch_size, file, task, ep, show_data_analysis)
+
+                self.add_batch_raw_episode_data(num_iters*self.loading_batch_size, num_frames, file, task, ep, show_data_analysis)
+
+                if show_data_analysis or outlier_deletion:
+                    self.compute_mean_dists()
+                
+                if outlier_deletion:
+                    out_indices = find_lower_outlier(self.mean_dists, self.verbose)
                     for loading_batch_idx in range(num_iters):
-                        self.add_batch_raw_episode_data(loading_batch_idx*self.loading_batch_size, (loading_batch_idx+1)*self.loading_batch_size, file, task, ep, show_data_analysis)
+                        self.add_batch_raw_episode_data(loading_batch_idx*self.loading_batch_size, (loading_batch_idx+1)*self.loading_batch_size, file, task, ep, show_data_analysis, out_indices=out_indices)
 
-                    self.add_batch_raw_episode_data(num_iters*self.loading_batch_size, num_frames, file, task, ep, show_data_analysis)
+                    self.add_batch_raw_episode_data(num_iters*self.loading_batch_size, num_frames, file, task, ep, show_data_analysis, out_indices=out_indices)
 
-                    if show_data_analysis or outlier_deletion:
-                        self.compute_mean_dists()
-                    
-                    if outlier_deletion:
-                        out_indices = find_lower_outlier(self.mean_dists, self.verbose)
-                        for loading_batch_idx in range(num_iters):
-                            self.add_batch_raw_episode_data(loading_batch_idx*self.loading_batch_size, (loading_batch_idx+1)*self.loading_batch_size, file, task, ep, show_data_analysis, out_indices=out_indices)
+                    if show_data_analysis:
+                        self.save_data_analysis(ep, out_indices)
+                elif show_data_analysis:
+                    self.save_data_analysis(ep, None)
 
-                        self.add_batch_raw_episode_data(num_iters*self.loading_batch_size, num_frames, file, task, ep, show_data_analysis, out_indices=out_indices)
-
-                        if show_data_analysis:
-                            self.save_data_analysis(ep, out_indices)
-                    elif show_data_analysis:
-                        self.save_data_analysis(ep, None)
-
-                    if self.verbose:
+                if self.verbose:
+                    self.dataset.save_episode()
+                else:
+                    old_stdout, old_stderr, devnull = suppress_c_stdout_stderr()
+                    try:
                         self.dataset.save_episode()
-                    else:
-                        old_stdout, old_stderr, devnull = suppress_c_stdout_stderr()
-                        try:
-                            self.dataset.save_episode()
-                        finally:
-                            restore_c_stdout_stderr(old_stdout, old_stderr, devnull)
+                    finally:
+                        restore_c_stdout_stderr(old_stdout, old_stderr, devnull)
 
         return self.dataset
     
@@ -437,9 +437,8 @@ class ConverterToLeRobotDataset():
 
 def port_inria_franka(
     hdf5_folder_path: Path,
-    repo_id: str,
-    hdf5_dataset_name: str | None = None,
-    task: str = "DEBUG",
+    repo_folder_path: Path,
+    tasks: list[str] | None = None,
     *,
     episodes: list[int] | None = None,
     push_to_hub: bool = False,
@@ -453,27 +452,29 @@ def port_inria_franka(
     with open(hdf5_folder_path / "config.yaml") as f:
         config = yaml.safe_load(f)
 
-    if hdf5_dataset_name is None:
+    if tasks is None:
+        tasks = []
         for f in os.listdir(hdf5_folder_path):
             if f.split(".")[-1] == "h5":
-                hdf5_dataset_name = f
-                break
+                tasks.append(f[:-3])
 
-    # Computes the feature dimensions and creates episodes if none selected
-    f = h5py.File(hdf5_folder_path / hdf5_dataset_name, "r")
-    if episodes is None:
-        episodes = []
-        for key in f.keys():
-            episodes.append(int(key))
+    for task in tasks:
 
-    converter = ConverterToLeRobotDataset(repo_id, task, "franka", config, mode=mode, dataset_config=dataset_config, verbose=verbose, loading_batch_size=loading_batch_size)
+        # Computes the feature dimensions and creates episodes if none selected
+        f = h5py.File(hdf5_folder_path / (task+".h5"), "r")
+        if episodes is None:
+            episodes = []
+            for key in f.keys():
+                episodes.append(int(key))
 
-    converter.populate(task, hdf5_folder_path / hdf5_dataset_name, episodes, show_data_analysis=show_data_analysis)
+        converter = ConverterToLeRobotDataset(repo_folder_path / task, task, "franka", config, mode=mode, dataset_config=dataset_config, verbose=verbose, loading_batch_size=loading_batch_size)
 
-    subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME / repo_id], check=True)
+        converter.populate(task, hdf5_folder_path / (task+".h5"), episodes, show_data_analysis=show_data_analysis)
 
-    if push_to_hub:
-        converter.dataset.push_to_hub()
+        subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME / (repo_folder_path / task)], check=True)
+
+        if push_to_hub:
+            converter.dataset.push_to_hub()
 
 
 if __name__ == "__main__":
