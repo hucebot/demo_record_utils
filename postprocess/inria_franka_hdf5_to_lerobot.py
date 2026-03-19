@@ -175,9 +175,9 @@ class ConverterToLeRobotDataset():
                 ],
             }
 
-        while Path(root / repo_id).exists():
-            repo_id += "_twin"
-        
+        while (root / repo_id).exists():
+            repo_id = repo_id.parent / (repo_id.name + "_twin")
+            
         self.dataset = LeRobotDataset.create(
         repo_id=repo_id,
         root=root / repo_id,

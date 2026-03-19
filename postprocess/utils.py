@@ -365,7 +365,7 @@ def extractTwist(bagpath, topic_name, conversion_args, verbose=False):
         return twist_times, twist_array
 
 
-def extractGripperFromPointStamped(bagpath, topic_name, conversion_args, verbose=False):
+def extractGripperWidthFromPointStamped(bagpath, topic_name, conversion_args, verbose=False):
     """Extract gripper command from topic of type geometry_msgs/PointStamped as numpy array"""
     if verbose:
         print(f"Extracting '{topic_name}' from '{bagpath}'")
@@ -395,7 +395,7 @@ def extractGripperFromPointStamped(bagpath, topic_name, conversion_args, verbose
             print("gripper_times", gripper_times.shape)
             print("gripper_array", gripper_array.shape)
 
-        return gripper_times, gripper_array
+        return gripper_times, [gripper_array]
     
 def extractGripperWidth(bagpath, topic_name, conversion_args, verbose=False):
     """Extract gripper width from topic of type custom_msgs/msg/GripperWidth as numpy array"""
@@ -575,6 +575,8 @@ def extract_topic(topic_type, bagpaths, topic_name, topic_conversions, verbose=T
             timestamp, result = extractWrenchStamped(bagpath, topic_name, conversion_args, verbose=verbose)
         elif topic_type == "custom_msgs/msg/GripperWidth":
             timestamp, result = extractGripperWidth(bagpath, topic_name, conversion_args, verbose=verbose)
+        elif topic_type == "geometry_msgs/msg/PointStamped":
+            timestamp, result = extractGripperWidthFromPointStamped(bagpath, topic_name, conversion_args, verbose=verbose)
         elif topic_type == "sensor_msgs/msg/Image":
             timestamp, result = extractImage(bagpath, topic_name, conversion_args, verbose=verbose)
         else:
