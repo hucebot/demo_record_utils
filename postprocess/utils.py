@@ -365,7 +365,7 @@ def extractTwist(bagpath, topic_name, conversion_args, verbose=False):
         return twist_times, twist_array
 
 
-def extractGripperWidthFromPointStamped(bagpath, topic_name, conversion_args, verbose=False):
+def extractGripperFromPointStamped(bagpath, topic_name, conversion_args, verbose=False):
     """Extract gripper command from topic of type geometry_msgs/PointStamped as numpy array"""
     if verbose:
         print(f"Extracting '{topic_name}' from '{bagpath}'")
@@ -558,6 +558,8 @@ def getLastDataAtRefTimes(reference_times, data_times, data_dict):
     for key in data_dict.keys():
         last_data_dict[key] = data_dict[key][indices]
 
+    # print("last_data_dict:  ", last_data_dict)
+
     return last_data_dict
 
 def extract_topic(topic_type, bagpaths, topic_name, topic_conversions, verbose=True):
@@ -576,7 +578,7 @@ def extract_topic(topic_type, bagpaths, topic_name, topic_conversions, verbose=T
         elif topic_type == "custom_msgs/msg/GripperWidth":
             timestamp, result = extractGripperWidth(bagpath, topic_name, conversion_args, verbose=verbose)
         elif topic_type == "geometry_msgs/msg/PointStamped":
-            timestamp, result = extractGripperWidthFromPointStamped(bagpath, topic_name, conversion_args, verbose=verbose)
+            timestamp, result = extractGripperFromPointStamped(bagpath, topic_name, conversion_args, verbose=verbose)
         elif topic_type == "sensor_msgs/msg/Image":
             timestamp, result = extractImage(bagpath, topic_name, conversion_args, verbose=verbose)
         else:
@@ -699,7 +701,7 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
                     # Check inconsistencies
                     for topic_name in selected_topics.keys():
                         if not(topic_name in topic_types.keys()):
-                            print(f"{bcolors.FAIL}Error : The given topic {topic_name} is unavailable in the data so the conversion cannot proceed !{bcolors.ENDC}")
+                            print(f"{bcolors.FAIL}Error : The given topic {topic_name} is unavailable in the data (folder {demo_folder}) so the conversion cannot proceed !{bcolors.ENDC}")
                             return infos, fps_tot_mean
         
         # Sort to get everything in the right order
@@ -712,11 +714,15 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
         # Search for reference topic
         reference_topic_times = None
         for i, topic_name in enumerate(selected_topics.keys()):
+            
             if topic_name == reference_topic_name:
                 topic_times, _ = extract_topic(topic_types[topic_name], bagpaths, topic_name, selected_topics[topic_name], verbose=verbose)
                 reference_topic_times = topic_times
+                # print("FIRST: ". topic_name)
                 break
+
             elif i == number_topics-1:
+                # print("SECOND: ", topic_name)
                 if demo_idx == 0:
                     print(f"{bcolors.WARNING}Warning : The given reference topic is unavailable in the data so the last topic is considered the reference topic by default !{bcolors.ENDC}")
 

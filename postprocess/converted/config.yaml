@@ -2,7 +2,7 @@ action:
   hdf5_selected_names:
   - actions/desired_ee_pos
   - actions/desired_gripper_width
-  lerobot_name: action
+  lerobot_name: motor
   lerobot_names:
   - desired_ee_pos_0
   - desired_ee_pos_1
@@ -33,14 +33,22 @@ cameras:
     height: 480
     name: observations/gripper_camera
     width: 640
-  gripper_camera_depth:
-    channels: 3
-    height: 480
-    name: observations/gripper_camera_depth
-    width: 640
 fps_used:
-  one_bag: 30.11804527282715
-outlier_deletion: false
+  4_corners_fts: 29.849962949752808
+  bag1: 30.185403885379916
+  bag2: 30.0658627786944
+  columns_leo: 30.134481658935545
+  columns_mathis: 29.84577751159668
+  cubes_4_fts: 29.81123971939087
+  cubes_4_fts_webcam: 30.15871638059616
+  cubes_gen: 30.28275216877131
+  cubes_gen_fts: 29.798134021759033
+  fts_classify: 30.13408954326923
+  fts_classify2: 30.131151541685448
+  grasp_2pos_new: 30.276081371307374
+  new_cubes_grasp_small: 29.97467565536499
+  one_bag: 30.2424290339152
+outlier_deletion: true
 state:
   hdf5_selected_names:
   - observations/joint_pos
@@ -48,7 +56,9 @@ state:
   - observations/joint_torques
   - observations/curr_ee_pos
   - observations/gripper_width
-  lerobot_name: state
+  - observations/ee_force
+  - observations/ee_torque
+  lerobot_name: observations/gripper_width
   lerobot_names:
   - joint_pos_0
   - joint_pos_1
@@ -79,3 +89,9 @@ state:
   - curr_ee_pos_5
   - curr_ee_pos_6
   - gripper_width_0
+  - ee_force_0
+  - ee_force_1
+  - ee_force_2
+  - ee_torque_0
+  - ee_torque_1
+  - ee_torque_2

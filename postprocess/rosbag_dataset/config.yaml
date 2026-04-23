@@ -1,4 +1,6 @@
-reference_topic_name: /camera/camera/depth/image_rect_raw
+# reference_topic_name: /camera/camera/color/image_raw/compressed
+# reference_topic_name: /camera/camera/depth/image_rect_raw
+reference_topic_name: /webcam1/image_raw/compressed
 
 selected_topics_conversion:
   
@@ -6,14 +8,14 @@ selected_topics_conversion:
   # Vision
   - hdf5_name: observations/gripper_camera
     from_rosbag_topic_name: /camera/camera/color/image_raw/compressed
+  #- hdf5_name: observations/gripper_camera_depth
+  #  from_rosbag_topic_name: /camera/camera/depth/image_rect_raw
   - hdf5_name: observations/front_cam1
     from_rosbag_topic_name: /webcam1/image_raw/compressed
   - hdf5_name: observations/front_cam2
     from_rosbag_topic_name: /webcam2/image_raw/compressed
   - hdf5_name: observations/front_cam3
     from_rosbag_topic_name: /webcam3/image_raw/compressed
-  - hdf5_name: observations/gripper_camera_depth
-    from_rosbag_topic_name: /camera/camera/depth/image_rect_raw
 
   # Kinematic robot state
   - hdf5_name: observations/joint_pos
@@ -22,15 +24,17 @@ selected_topics_conversion:
   - hdf5_name: observations/joint_vel
     from_rosbag_topic_name: /cartesian_impedance/joint_state
     physical_quantity: velocity
+  - hdf5_name: observations/curr_ee_pos
+    from_rosbag_topic_name: /cartesian_impedance/cartesian_pos_curr
   - hdf5_name: observations/gripper_width
     from_rosbag_topic_name: /panda_gripper/width
 
   # Force-feedback
   - hdf5_name: observations/ee_force
-    from_rosbag_topic_name: /cartesian_impedance/f_ext_cart
+    from_rosbag_topic_name: /bota_ft_sensor/wrench_filtered
     physical_quantity: force
   - hdf5_name: observations/ee_torque
-    from_rosbag_topic_name: /cartesian_impedance/f_ext_cart
+    from_rosbag_topic_name: /bota_ft_sensor/wrench_filtered
     physical_quantity: torque
   - hdf5_name: observations/joint_torques
     from_rosbag_topic_name: /cartesian_impedance/joint_state

@@ -175,9 +175,11 @@ class ConverterToLeRobotDataset():
                 ],
             }
 
+        print("repo", repo_id, root / repo_id)
+
         while (root / repo_id).exists():
             repo_id = repo_id.parent / (repo_id.name + "_twin")
-            
+        
         self.dataset = LeRobotDataset.create(
         repo_id=repo_id,
         root=root / repo_id,
@@ -213,7 +215,7 @@ class ConverterToLeRobotDataset():
                 if show_data_analysis or outlier_deletion:
                     self.state_dists, self.img_dists, self.mean_dists = {key:[] for key in state_ft_list}, {key:[] for key in camera_keys}, []
                     self.last_state, self.last_img_per_cam = None, {}
-
+                    
                 num_frames = file[f"{ep:03d}/"+self.custom_config["state"]["hdf5_selected_names"][-1]][:].shape[0]
 
                 if self.verbose:

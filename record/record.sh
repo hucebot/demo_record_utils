@@ -60,7 +60,7 @@ TOPICS=(
   /cartesian_impedance/cartesian_pos_curr
   /cartesian_impedance/cartesian_pos_des_filt
   /cartesian_impedance/equilibrium_pose
-  /cartesian_impedance/f_ext_cart
+  /bota_ft_sensor/wrench_filtered
   /cartesian_impedance/joint_state
   /panda_gripper/gripper_command
   /panda_gripper/width
