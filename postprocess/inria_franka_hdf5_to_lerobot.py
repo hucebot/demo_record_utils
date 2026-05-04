@@ -452,6 +452,14 @@ def port_inria_franka(
     with open(hdf5_folder_path / "config.yaml") as f:
         config = yaml.safe_load(f)
 
+    if final_name:
+        fps_estimation = np.mean([config["fps_used"][task] for task in tasks])
+        
+        config["fps_used"][final_name] = fps_estimation
+
+        with open(hdf5_folder_path / "config.yaml", "w") as f:
+            yaml.dump(config, f, default_flow_style=False)
+
     if tasks is None:
         tasks = []
         for f in os.listdir(hdf5_folder_path):
