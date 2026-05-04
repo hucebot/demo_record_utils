@@ -442,6 +442,7 @@ def port_inria_franka(
     repo_folder_path: Path,
     tasks: list[str] | None = None,
     *,
+    final_name: str | None = None,
     episodes: list[int] | None = None,
     push_to_hub: bool = False,
     mode: Literal["video", "image"] = "video",
@@ -460,6 +461,8 @@ def port_inria_franka(
             if f.split(".")[-1] == "h5":
                 tasks.append(f[:-3])
 
+    converter = None
+
     for task in tasks:
 
         # Computes the feature dimensions and creates episodes if none selected
@@ -469,7 +472,8 @@ def port_inria_franka(
             for key in f.keys():
                 episodes.append(int(key))
 
-        converter = ConverterToLeRobotDataset(repo_folder_path / task, task, "franka", config, mode=mode, dataset_config=dataset_config, verbose=verbose, loading_batch_size=loading_batch_size)
+        if (converter is None) or (final_name is None):
+            converter = ConverterToLeRobotDataset(repo_folder_path / task, final_name if final_name else task, "franka", config, mode=mode, dataset_config=dataset_config, verbose=verbose, loading_batch_size=loading_batch_size)
 
         converter.populate(task, hdf5_folder_path / (task+".h5"), episodes, show_data_analysis=show_data_analysis)
 
