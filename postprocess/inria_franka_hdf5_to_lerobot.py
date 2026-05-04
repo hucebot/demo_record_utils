@@ -198,9 +198,6 @@ class ConverterToLeRobotDataset():
         self.custom_config = custom_config
         
     def populate(self, task, hdf5_path, episodes, show_data_analysis=False):
-        if show_data_analysis and self.lerobot_path is not None:
-            os.mkdir(self.lerobot_path / "data analysis")
-
         fps_used = self.custom_config["fps_used"][task]
         if np.abs(fps_used - self.fps_used) > 0.5:
             print(f"Warning : the fps {fps_used} used for task {task} is too different from the {self.fps_used} fps used for the initially given task {self.init_task}")
@@ -365,7 +362,7 @@ class ConverterToLeRobotDataset():
     
     def save_data_analysis(self, ep, out_indices):
         outlier_deletion = self.custom_config["outlier_deletion"]
-        os.mkdir(self.lerobot_path / "data analysis" / str(ep))
+        (self.lerobot_path / "data analysis" / str(ep)).mkdir(parents=True, exist_ok=True)
 
         for state_ft_name in self.state_dists.keys():
             if self.verbose:
@@ -461,7 +458,7 @@ def port_inria_franka(
             if f.split(".")[-1] == "h5":
                 tasks.append(f[:-3])
 
-    converter = None
+    converter, n_eps_to_add = None, 0
 
     for task in tasks:
 
@@ -470,7 +467,7 @@ def port_inria_franka(
         if episodes is None:
             episodes = []
             for key in f.keys():
-                episodes.append(int(key))
+                episodes.append(int(key)+n_eps_to_add)
 
         if (converter is None) or (final_name is None):
             converter = ConverterToLeRobotDataset(repo_folder_path / task, final_name if final_name else task, "franka", config, mode=mode, dataset_config=dataset_config, verbose=verbose, loading_batch_size=loading_batch_size)
@@ -481,6 +478,8 @@ def port_inria_franka(
 
         if push_to_hub:
             converter.dataset.push_to_hub()
+
+        n_eps_to_add = n_eps_to_add + len(episodes) if final_name else 0
 
 
 if __name__ == "__main__":
