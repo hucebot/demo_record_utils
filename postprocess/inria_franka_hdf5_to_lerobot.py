@@ -469,17 +469,24 @@ def port_inria_franka(
             for key in f.keys():
                 episodes.append(int(key)+n_eps_to_add)
 
-        if (converter is None) or (final_name is None):
-            converter = ConverterToLeRobotDataset(repo_folder_path / task, final_name if final_name else task, "franka", config, mode=mode, dataset_config=dataset_config, verbose=verbose, loading_batch_size=loading_batch_size)
+        if final_name:
+            if converter is None:
+                converter = ConverterToLeRobotDataset(repo_folder_path / final_name, final_name, "franka", config, mode=mode, dataset_config=dataset_config, verbose=verbose, loading_batch_size=loading_batch_size)
+        else:
+            converter = ConverterToLeRobotDataset(repo_folder_path / task, task, "franka", config, mode=mode, dataset_config=dataset_config, verbose=verbose, loading_batch_size=loading_batch_size)
 
         converter.populate(task, hdf5_folder_path / (task+".h5"), episodes, show_data_analysis=show_data_analysis)
 
-        subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME / (repo_folder_path / task)], check=True)
+        if final_name is None:
+            subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME / (repo_folder_path / task)], check=True)
 
         if push_to_hub:
             converter.dataset.push_to_hub()
 
         n_eps_to_add = n_eps_to_add + len(episodes) if final_name else 0
+
+    if final_name:
+        subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME / (repo_folder_path / final_name)], check=True)
 
 
 if __name__ == "__main__":
