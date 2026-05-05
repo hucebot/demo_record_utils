@@ -486,7 +486,7 @@ def port_inria_franka(
         converter.populate(task, hdf5_folder_path / (task+".h5"), episodes, show_data_analysis=show_data_analysis)
 
         if final_name is None:
-            subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME / (repo_folder_path / task)], check=True)
+            subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME / converter.dataset.repo_id], check=True)
 
         if push_to_hub:
             converter.dataset.push_to_hub()
@@ -494,7 +494,7 @@ def port_inria_franka(
         n_eps_to_add = n_eps_to_add + len(episodes) if final_name else 0
 
     if final_name:
-        subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME / (repo_folder_path / final_name)], check=True)
+        subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME / converter.dataset.repo_id], check=True)
 
 
 if __name__ == "__main__":
