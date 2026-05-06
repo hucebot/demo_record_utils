@@ -1,7 +1,13 @@
 """
 Script to convert Inria hdf5 data to the LeRobot dataset v2.1 format.
 
-Example usage: python inria_franka_hdf5_to_lerobot.py --hdf5_path /path/to/raw/data --repo_id <org>/<dataset-name> --task <task-name>
+Example usage: 
+
+python inria_franka_hdf5_to_lerobot.py \
+    --hdf5-folder-path /mnt/Data/converted \
+    --repo-folder-path /mnt/Data/datasets/lerobot \
+    --tasks cubes
+
 """
 
 import dataclasses
@@ -24,7 +30,6 @@ import subprocess
 import os
 import cv2
 import sys
-
 
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/usr/local/bin/ffmpeg" # make packages compile with the libsvtav installed from source
 
@@ -106,17 +111,39 @@ def find_lower_outlier(x, verbose=False):
     return np.sort(sorted_idx[:last_dec_idx[0]+1])
 
 def process_image(data, width, height, uncompressed):
+    """
+    Returns images as float32 normalized in [0, 1] with shape (C, H, W).
+    """
     if uncompressed:
-        img = data/np.max(data)
-        if img.shape[-1] == 1:
-            img = np.repeat(img, 3, axis=-1)
-
-        return cv2.resize(img, (width, height), interpolation=cv2.INTER_LINEAR)
+        img = data  # typically HWC uint8 (already decoded)
     else:
-        # load one compressed image after the other in RAM and uncompress
+        # Load one compressed image after the other in RAM and uncompress (OpenCV gives BGR).
         img = cv2.imdecode(data, cv2.IMREAD_COLOR)
-        img = cv2.resize(img, (width, height), interpolation=cv2.INTER_LINEAR)
-        return img[:, :, [2, 1, 0]]  # from BGR to RGB
+        # Convert BGR->RGB (only needed in this compressed->decoded path).
+        if img is not None and img.ndim == 3 and img.shape[-1] == 3:
+            img = img[:, :, [2, 1, 0]]
+
+    # Ensure HWC
+    if img.ndim == 2:
+        img = img[:, :, None]
+    if img.shape[-1] == 1:
+        img = np.repeat(img, 3, axis=-1)
+
+    # Resize in HWC
+    img = cv2.resize(img, (width, height), interpolation=cv2.INTER_LINEAR)
+
+    # Normalize to [0, 1]
+    if img.dtype == np.uint8:
+        img = img.astype(np.float32) / 255.0
+    else:
+        img = img.astype(np.float32)
+        denom = float(np.max(img))
+        if denom > 0:
+            img = img / denom
+
+    # HWC -> CHW
+    img = np.transpose(img, (2, 0, 1))
+    return img
 
 
 @dataclasses.dataclass(frozen=True)
@@ -167,18 +194,17 @@ class ConverterToLeRobotDataset():
                 print(cam, (custom_config["cameras"][cam]["height"], custom_config["cameras"][cam]["width"], custom_config["cameras"][cam]["channels"]),)
             features[f"observation.images.{cam}"] = {
                 "dtype": mode,
-                "shape": (custom_config["cameras"][cam]["height"], custom_config["cameras"][cam]["width"], custom_config["cameras"][cam]["channels"]),
+                "shape": (custom_config["cameras"][cam]["channels"], custom_config["cameras"][cam]["height"], custom_config["cameras"][cam]["width"]),
                 "names": [
+                    "channels",
                     "height",
                     "width",
-                    "channels",
                 ],
             }
 
-        print("repo", repo_id, root / repo_id)
-
-        while (root / repo_id).exists():
-            repo_id = repo_id.parent / (repo_id.name + "_twin")
+        # PATCH
+        while Path(root / repo_id).exists():
+            repo_id = str(repo_id) + "_twin"
         
         self.dataset = LeRobotDataset.create(
         repo_id=repo_id,
@@ -198,6 +224,10 @@ class ConverterToLeRobotDataset():
         self.custom_config = custom_config
         
     def populate(self, task, hdf5_path, episodes, show_data_analysis=False):
+
+        # if show_data_analysis and self.lerobot_path is not None:
+        #     os.mkdir(self.lerobot_path / "data analysis")
+
         fps_used = self.custom_config["fps_used"][task]
         if np.abs(fps_used - self.fps_used) > 0.5:
             print(f"Warning : the fps {fps_used} used for task {task} is too different from the {self.fps_used} fps used for the initially given task {self.init_task}")
@@ -212,8 +242,13 @@ class ConverterToLeRobotDataset():
                 if show_data_analysis or outlier_deletion:
                     self.state_dists, self.img_dists, self.mean_dists = {key:[] for key in state_ft_list}, {key:[] for key in camera_keys}, []
                     self.last_state, self.last_img_per_cam = None, {}
-                    
-                num_frames = file[f"{ep:03d}/"+self.custom_config["state"]["hdf5_selected_names"][-1]][:].shape[0]
+
+                # num_frames = file[f"{ep:03d}/"+self.custom_config["state"]["hdf5_selected_names"][-1]][:].shape[0]
+
+                # PATCH
+                demo_key = f"data/demo_{ep}"
+                sensor_path = self.custom_config["state"]["hdf5_selected_names"][-1]
+                num_frames = file[f"{demo_key}/{sensor_path}"].shape[0]
 
                 if self.verbose:
                     print(f"adding {num_frames} frames")
@@ -264,15 +299,20 @@ class ConverterToLeRobotDataset():
         state_ft_list = self.custom_config["state"]["hdf5_selected_names"]
         outlier_deletion = self.custom_config["outlier_deletion"]
 
+        # Robomimic PATH
+        demo_key = f"data/demo_{ep}"
+
         # action
-        action = []
-        for action_ft_name in action_ft_list:
-            action.append(torch.from_numpy(file[f"{ep:03d}/"+action_ft_name][:])[start:end])
+        # New rosbag2hdf5 format writes a single dataset: "{demo_key}/actions"
+        # (config is expected to be updated accordingly)
+        action = [torch.from_numpy(file[f"{demo_key}/actions"][:])[start:end]]
 
         # state
         state = []
         for state_ft_name in state_ft_list:
-            state.append(torch.from_numpy(file[f"{ep:03d}/"+state_ft_name][:])[start:end])
+            # PATCH
+            # state.append(torch.from_numpy(file[f"{ep:03d}/"+state_ft_name][:])[start:end])
+            state.append(torch.from_numpy(file[f"{demo_key}/{state_ft_name}"][:])[start:end])
 
         # camera
         imgs_per_cam = self.load_raw_images_per_camera(start, end, file, ep)
@@ -308,8 +348,8 @@ class ConverterToLeRobotDataset():
 
             for i in range(state.shape[0]):
                 frame = {
-                    "observation.state": state[i],
-                    "action": action[i],
+                    "observation.state": state[i].astype(np.float32),
+                    "action": action[i].astype(np.float32),
                 }
 
                 for camera, img_array in imgs_per_cam.items():
@@ -362,6 +402,7 @@ class ConverterToLeRobotDataset():
     
     def save_data_analysis(self, ep, out_indices):
         outlier_deletion = self.custom_config["outlier_deletion"]
+        # os.mkdir(self.lerobot_path / "data analysis" / str(ep))
         (self.lerobot_path / "data analysis" / str(ep)).mkdir(parents=True, exist_ok=True)
 
         for state_ft_name in self.state_dists.keys():
@@ -413,25 +454,37 @@ class ConverterToLeRobotDataset():
         fig.tight_layout()
         plt.savefig(self.lerobot_path / "data analysis" / str(ep) / ("spearman_matrix.png"), bbox_inches="tight")
         plt.close()
-
+    
     def load_raw_images_per_camera(self, start, end, hd5_file: h5py.File, ep: int) -> dict[str, np.ndarray]:
-        imgs_per_cam = {}
-        camera_dict = self.custom_config["cameras"]
-        if self.verbose:
-            print("Processing images")
-        for camera in camera_dict.keys():
-            width, height, channel = camera_dict[camera]["width"], camera_dict[camera]["height"], camera_dict[camera]["channels"]
-            if self.verbose:
-                print("Processing camera", camera, " with (re)shape (", width, height, channel, ")")
-            uncompressed = hd5_file[f"{ep:03d}/"+camera_dict[camera]["name"]].ndim == 4
-            imgs_per_cam[camera] = []
-            for img in hd5_file[f"{ep:03d}/"+camera_dict[camera]["name"]][start:end]:
-                imgs_per_cam[camera].append(process_image(img, width, height, uncompressed))
-            imgs_per_cam[camera] = np.array(imgs_per_cam[camera])
+            
+            # PATCH
 
-        if self.verbose:
-            print("finished the processing")
-        return imgs_per_cam
+            imgs_per_cam = {}
+            camera_dict = self.custom_config["cameras"]
+            demo_key = f"data/demo_{ep}"
+            
+            if self.verbose:
+                print("Processing images")
+                
+            for camera in camera_dict.keys():
+                width, height, channel = camera_dict[camera]["width"], camera_dict[camera]["height"], camera_dict[camera]["channels"]
+                
+                hdf5_path = f"{demo_key}/{camera_dict[camera]['name']}"
+                
+                if hdf5_path not in hd5_file:
+                    if self.verbose: print(f"Camera {camera} non trovata in {hdf5_path}, salto.")
+                    continue
+
+                uncompressed = hd5_file[hdf5_path].ndim == 4
+                imgs_per_cam[camera] = []
+                for img in hd5_file[hdf5_path][start:end]:
+                    imgs_per_cam[camera].append(process_image(img, width, height, uncompressed))
+                imgs_per_cam[camera] = np.array(imgs_per_cam[camera])
+            
+            if self.verbose:
+                print("finished the processing")
+
+            return imgs_per_cam
 
 
 def port_inria_franka(
@@ -439,7 +492,6 @@ def port_inria_franka(
     repo_folder_path: Path,
     tasks: list[str] | None = None,
     *,
-    final_name: str | None = None,
     episodes: list[int] | None = None,
     push_to_hub: bool = False,
     mode: Literal["video", "image"] = "video",
@@ -449,16 +501,9 @@ def port_inria_franka(
     loading_batch_size=1024,
 ):
     config = None
-    with open(hdf5_folder_path / "config.yaml") as f:
+    config_file_path = hdf5_folder_path / "config.yaml"
+    with open(config_file_path) as f:
         config = yaml.safe_load(f)
-
-    if final_name:
-        fps_estimation = np.mean([config["fps_used"][task] for task in tasks])
-        
-        config["fps_used"][final_name] = fps_estimation
-
-        with open(hdf5_folder_path / "config.yaml", "w") as f:
-            yaml.dump(config, f, default_flow_style=False)
 
     if tasks is None:
         tasks = []
@@ -466,35 +511,40 @@ def port_inria_franka(
             if f.split(".")[-1] == "h5":
                 tasks.append(f[:-3])
 
-    converter, n_eps_to_add = None, 0
-
     for task in tasks:
 
         # Computes the feature dimensions and creates episodes if none selected
         f = h5py.File(hdf5_folder_path / (task+".h5"), "r")
+        
+        # if episodes is None:
+        #     episodes = []
+        #     for key in f.keys():
+        #         print(key)
+        #         episodes.append(int(key))
+
+        # PATCH
         if episodes is None:
             episodes = []
-            for key in f.keys():
-                episodes.append(int(key)+n_eps_to_add)
+            # Robomimic mette tutto sotto la chiave "data"
+            if "data" in f:
+                demo_keys = list(f["data"].keys())
+                for key in demo_keys:
+                    # key sarà qualcosa tipo "demo_0"
+                    # Estraiamo solo il numero per riempire la lista episodes
+                    try:
+                        episode_idx = int(key.split("_")[-1])
+                        episodes.append(episode_idx)
+                    except ValueError:
+                        print(f"Salto la chiave {key} perché non contiene un indice numerico.")
 
-        if final_name:
-            if converter is None:
-                converter = ConverterToLeRobotDataset(repo_folder_path / final_name, final_name, "franka", config, mode=mode, dataset_config=dataset_config, verbose=verbose, loading_batch_size=loading_batch_size)
-        else:
-            converter = ConverterToLeRobotDataset(repo_folder_path / task, task, "franka", config, mode=mode, dataset_config=dataset_config, verbose=verbose, loading_batch_size=loading_batch_size)
+        converter = ConverterToLeRobotDataset(repo_folder_path / task, task, "franka", config, mode=mode, dataset_config=dataset_config, verbose=verbose, loading_batch_size=loading_batch_size)
 
         converter.populate(task, hdf5_folder_path / (task+".h5"), episodes, show_data_analysis=show_data_analysis)
 
-        if final_name is None:
-            subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME / converter.dataset.repo_id], check=True)
+        subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME / converter.dataset.repo_id], check=True)
 
         if push_to_hub:
             converter.dataset.push_to_hub()
-
-        n_eps_to_add = n_eps_to_add + len(episodes) if final_name else 0
-
-    if final_name:
-        subprocess.run(["chmod", "-R", "777", HF_LEROBOT_HOME / converter.dataset.repo_id], check=True)
 
 
 if __name__ == "__main__":

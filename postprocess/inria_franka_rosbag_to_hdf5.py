@@ -1,7 +1,13 @@
 """
 Script to extract franka (or other robot) manipulation demo from recorded rosbags and store in HDF5 file.
 
-Example usage: python inria_franka_rosbag_to_hdf5.py --folder /path/to/folder
+Example usage: 
+
+python inria_franka_rosbag_to_hdf5.py \
+    --rosbag_folder /mnt/Data/rosbags \
+    --hdf5_dir /mnt/Data/converted \
+    --tasks cubes
+
 """
 
 import pathlib
@@ -69,12 +75,8 @@ def main(dataset_name, desired_dir, tasks_to_convert, verbose):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Convert demo dataset from rosbag to hdf5"
-    )
-    parser.add_argument(
-        "--rosbag_folder", required=True, help="name of the rosbag dataset folder"
-    )
+    parser = argparse.ArgumentParser(description="Convert demo dataset from rosbag to hdf5")
+    parser.add_argument("--rosbag_folder", required=True, help="name of the rosbag dataset folder")
     parser.add_argument("--hdf5_dir", default="", help="name of the desired hdf5 dataset directory")
     parser.add_argument("--tasks", default=[], help="names of the tasks to convert", nargs='+')
     parser.add_argument("--verbose", action="store_true", help="name of the desired hdf5 dataset directory")

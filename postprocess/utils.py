@@ -204,7 +204,10 @@ def extractAndEncodeImage(bagpath, topic_name, verbose=False):
 
 
 def extractCompressedImage(bagpath, topic_name, conversion_args, verbose=False):
-    """Extract compressed images from topic of type sensor_msgs/CompressedImage as compressed JPEG"""
+    """Extract images from topic of type sensor_msgs/CompressedImage as numpy array (T,H,W,C).
+
+    Keeps original H,W from the topic (no resize). Returns RGB for color images.
+    """
     if verbose:
         print(f"Extracting '{topic_name}' from '{bagpath}'")
 
@@ -216,32 +219,27 @@ def extractCompressedImage(bagpath, topic_name, conversion_args, verbose=False):
         connections = [x for x in reader.connections if x.topic == topic_name]
         times = []
         images = []
-        max_length = 0
         for connection, timestamp, rawdata in reader.messages(connections=connections):
             msg = reader.deserialize(rawdata, connection.msgtype)
+            img_array = fixed_compressed_imgmsg_to_cv2(msg)  # OpenCV BGR 
+            if img_array.ndim == 3 and img_array.shape[-1] == 3: 
+                img_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
             times.append(int(timestamp * 1e-6))  # milliseconds
-            images.append(msg.data)
-            if len(msg.data) > max_length:
-                max_length = len(msg.data)
-
-        # pad encoded image with 0 to have uniform length
-        padded_images = []
-        for img in images:
-            padded_images.append(
-                np.append(img, np.zeros((max_length - len(img),), dtype=img.dtype))
-            )
+            images.append(img_array)
 
         image_times = np.array(times)
-        padded_images = np.array(padded_images)
+        images = np.array(images)
 
-        # add a dummy dimension
+        # Add a dummy dimension for timestamps, and ensure images have a channel axis.
         image_times = np.expand_dims(image_times, axis=-1)
+        if images.ndim == 3:  # grayscale images: (T, H, W) -> (T, H, W, 1)
+            images = np.expand_dims(images, axis=-1)
 
         if verbose:
             print("image_times", image_times.shape)
-            print("padded_images", padded_images.shape)
+            print("images", images.shape)
 
-        return image_times, [padded_images]
+        return image_times, [images]
 
 
 def extractAndDecodeCompressedImage(bagpath, topic_name, conversion_args, verbose=False):
@@ -558,8 +556,6 @@ def getLastDataAtRefTimes(reference_times, data_times, data_dict):
     for key in data_dict.keys():
         last_data_dict[key] = data_dict[key][indices]
 
-    # print("last_data_dict:  ", last_data_dict)
-
     return last_data_dict
 
 def extract_topic(topic_type, bagpaths, topic_name, topic_conversions, verbose=True):
@@ -681,7 +677,7 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
 
     for demo_idx, demo_folder in enumerate(ep_names):
         print(f"Processing demo {demo_idx + 1}/{num_bags}")
-        demo_label = f"{demo_idx:03d}"
+        demo_label = f"demo_{demo_idx}"
         demo_start_time = time.time()
 
         # Read metadata
@@ -718,11 +714,9 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
             if topic_name == reference_topic_name:
                 topic_times, _ = extract_topic(topic_types[topic_name], bagpaths, topic_name, selected_topics[topic_name], verbose=verbose)
                 reference_topic_times = topic_times
-                # print("FIRST: ". topic_name)
                 break
 
             elif i == number_topics-1:
-                # print("SECOND: ", topic_name)
                 if demo_idx == 0:
                     print(f"{bcolors.WARNING}Warning : The given reference topic is unavailable in the data so the last topic is considered the reference topic by default !{bcolors.ENDC}")
 
@@ -742,8 +736,15 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
 
 
         with h5py.File(f"{desired_path / task}.h5", "a") as h5file:
-            group = h5file.create_group(demo_label, track_order=True)
-            group.create_dataset("timestamps", data=timestamps)
+            # New layout (minimal robomimic-like):
+            # /data/demo_{i}/{timestamps, actions, obs/*}
+            data_root = h5file.require_group("data")
+            ep_grp = data_root.create_group(demo_label, track_order=True)
+            ep_grp.create_dataset("timestamps", data=timestamps)
+
+            obs_dict = {}
+            action_parts = []
+            action_part_names = []
 
             for topic_name in selected_topics.keys():
                 # Open rosbag and extract topic data.
@@ -751,15 +752,61 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
 
                 # Synch data with given topic timestamps.
                 synch_topic_data = getLastDataAtRefTimes(reference_topic_times, topic_times, topic_data)
-                
-                for hdf5_name in topic_data.keys():
+
+                for full_name in topic_data.keys():
                     # Get the infos if it is the first demonstration
                     if demo_idx == 0:
                         infos.append({})
-                        infos[-1]["hdf5_name"] = hdf5_name
-                        infos[-1]["ft_example"] = topic_data[hdf5_name][0]
+                        infos[-1]["hdf5_name"] = full_name
+                        infos[-1]["ft_example"] = topic_data[full_name][0]
 
-                    group.create_dataset(hdf5_name, data=synch_topic_data[hdf5_name])
+                    if "/" in full_name:
+                        prefix, leaf = full_name.split("/", 1)
+                    else:
+                        prefix, leaf = "", full_name
+
+                    arr = synch_topic_data[full_name]
+
+                    if prefix == "observations":
+                        obs_dict[leaf] = arr
+                    elif prefix == "actions":
+                        action_parts.append(arr)
+                        action_part_names.append(leaf)
+                    else:
+                        obs_dict[full_name] = arr
+
+            ep_grp.attrs["num_samples"] = int(timestamps.shape[0])
+            if len(action_part_names) > 0:
+                ep_grp.attrs["action_parts"] = ",".join(action_part_names)
+
+            # Actions: concatenate along last dim into one dataset (T, A)
+            if len(action_parts) == 0:
+                actions = np.zeros((timestamps.shape[0], 0), dtype=np.float32)
+            else:
+                actions_cast = []
+                for a in action_parts:
+                    a = np.asarray(a)
+                    if a.ndim == 1:
+                        a = a[:, None]
+                    actions_cast.append(a.astype(np.float32, copy=False))
+                actions = np.concatenate(actions_cast, axis=1)
+            ep_grp.create_dataset("actions", data=actions)
+
+            obs_grp = ep_grp.create_group("obs")
+            for k, v in obs_dict.items():
+                v = np.asarray(v)
+                if v.shape[0] != timestamps.shape[0]:
+                    if verbose:
+                        print(
+                            f"{bcolors.WARNING}Warning: skipping obs '{k}' due to length mismatch {v.shape[0]} != {timestamps.shape[0]}{bcolors.ENDC}"
+                        )
+                    continue
+
+                if "image" in k or "cam" in k:
+                    obs_arr = v.astype(np.uint8, copy=False)
+                else:
+                    obs_arr = v.astype(np.float32, copy=False)
+                obs_grp.create_dataset(k, data=obs_arr)
 
         print(f"     data saved as demo '{demo_label}' in '{desired_path / task}.h5' file")
         print(f"     time: {(time.time() - demo_start_time):.2f} seconds")
