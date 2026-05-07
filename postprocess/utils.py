@@ -676,6 +676,7 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
     fps_tot_mean = 0
 
     for demo_idx, demo_folder in enumerate(ep_names):
+
         print(f"Processing demo {demo_idx + 1}/{num_bags}")
         demo_label = f"demo_{demo_idx}"
         demo_start_time = time.time()
@@ -723,22 +724,27 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
                 topic_times, _ = extract_topic(topic_types[topic_name], bagpaths, topic_name, selected_topics[topic_name], verbose=verbose)
                 reference_topic_times = topic_times
 
-        timestamps = reference_topic_times - reference_topic_times[0]
-        timestamps = timestamps * 1e-3
-        timestamps = timestamps.astype("float32")
-
+        # timestamps = reference_topic_times - reference_topic_times[0]
+        # timestamps = timestamps * 1e-3
+        # timestamps = timestamps.astype("float32")
         # Compute an estimated fps
-        timestamps = timestamps[np.pad(np.diff(timestamps[:,0]), (0,1), mode='constant', constant_values=1) > 0]
+        # timestamps = timestamps[np.pad(np.diff(timestamps[:,0]), (0,1), mode='constant', constant_values=1) > 0]
+
+        # Create mask to remove duplicates
+        valid_mask = np.pad(np.diff(reference_topic_times[:,0]), (0,1), mode='constant', constant_values=1) > 0
+        timestamps = reference_topic_times[valid_mask] - reference_topic_times[valid_mask][0]
+        timestamps = (timestamps * 1e-3).astype("float32")
+
         fps_mean, fps_std = np.mean(1/np.diff(timestamps[:,0])).item(), np.std(1/np.diff(timestamps[:,0])).item()
         print("fps estimated : ", fps_mean, "+/-", fps_std)
         fps_tot_mean = (fps_tot_mean*demo_idx+fps_mean)/(demo_idx+1)
 
-
-
         with h5py.File(f"{desired_path / task}.h5", "a") as h5file:
+            
             # New layout (minimal robomimic-like):
             # /data/demo_{i}/{timestamps, actions, obs/*}
             data_root = h5file.require_group("data")
+
             ep_grp = data_root.create_group(demo_label, track_order=True)
             ep_grp.create_dataset("timestamps", data=timestamps)
 
@@ -747,6 +753,7 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
             action_part_names = []
 
             for topic_name in selected_topics.keys():
+                
                 # Open rosbag and extract topic data.
                 topic_times, topic_data = extract_topic(topic_types[topic_name], bagpaths, topic_name, selected_topics[topic_name], verbose=verbose)
 
@@ -774,8 +781,19 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
                         action_part_names.append(leaf)
                     else:
                         obs_dict[full_name] = arr
+            
+            # Remove duplicates
+
+            for k in obs_dict.keys():
+                if obs_dict[k].shape[0] == len(valid_mask): 
+                    obs_dict[k] = obs_dict[k][valid_mask]
+
+            for i in range(len(action_parts)):
+                if action_parts[i].shape[0] == len(valid_mask):
+                    action_parts[i] = action_parts[i][valid_mask]
 
             ep_grp.attrs["num_samples"] = int(timestamps.shape[0])
+
             if len(action_part_names) > 0:
                 ep_grp.attrs["action_parts"] = ",".join(action_part_names)
 

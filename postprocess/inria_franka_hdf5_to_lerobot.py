@@ -4,8 +4,8 @@ Script to convert Inria hdf5 data to the LeRobot dataset v2.1 format.
 Example usage: 
 
 python inria_franka_hdf5_to_lerobot.py \
-    --hdf5-folder-path /mnt/Data/converted \
-    --repo-folder-path /mnt/Data/datasets/lerobot \
+    --hdf5-folder-path /mnt/Data/converted_dionisis \
+    --repo-folder-path /mnt/Data/datasets/lerobot_dionisis \
     --tasks cubes
 
 """
@@ -456,36 +456,28 @@ class ConverterToLeRobotDataset():
         plt.close()
     
     def load_raw_images_per_camera(self, start, end, hd5_file: h5py.File, ep: int) -> dict[str, np.ndarray]:
+
+        imgs_per_cam = {}
+        camera_dict = self.custom_config["cameras"]
+        demo_key = f"data/demo_{ep}"
+        
+        for camera in camera_dict.keys():
+            width, height = camera_dict[camera]["width"], camera_dict[camera]["height"]
+            hdf5_path = f"{demo_key}/{camera_dict[camera]['name']}"
             
-            # PATCH
+            if hdf5_path not in hd5_file:
+                continue
 
-            imgs_per_cam = {}
-            camera_dict = self.custom_config["cameras"]
-            demo_key = f"data/demo_{ep}"
+            ds = hd5_file[hdf5_path]
             
-            if self.verbose:
-                print("Processing images")
-                
-            for camera in camera_dict.keys():
-                width, height, channel = camera_dict[camera]["width"], camera_dict[camera]["height"], camera_dict[camera]["channels"]
-                
-                hdf5_path = f"{demo_key}/{camera_dict[camera]['name']}"
-                
-                if hdf5_path not in hd5_file:
-                    if self.verbose: print(f"Camera {camera} non trovata in {hdf5_path}, salto.")
-                    continue
+            data_batch = ds[start:end]
+            # Convertiamo in CHW e normalizziamo (quello che fa process_image internamente)
+            # Ma lo facciamo in modo vettorizzato per andare 100 volte più veloce!
+            data_batch = torch.from_numpy(data_batch).permute(0, 3, 1, 2).float() / 255.0
+            # Se serve il resize, lo facciamo qui, altrimenti passiamo oltre
+            imgs_per_cam[camera] = data_batch.numpy()
 
-                uncompressed = hd5_file[hdf5_path].ndim == 4
-                imgs_per_cam[camera] = []
-                for img in hd5_file[hdf5_path][start:end]:
-                    imgs_per_cam[camera].append(process_image(img, width, height, uncompressed))
-                imgs_per_cam[camera] = np.array(imgs_per_cam[camera])
-            
-            if self.verbose:
-                print("finished the processing")
-
-            return imgs_per_cam
-
+        return imgs_per_cam
 
 def port_inria_franka(
     hdf5_folder_path: Path,

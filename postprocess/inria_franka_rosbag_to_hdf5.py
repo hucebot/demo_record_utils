@@ -5,7 +5,7 @@ Example usage:
 
 python inria_franka_rosbag_to_hdf5.py \
     --rosbag_folder /mnt/Data/rosbags \
-    --hdf5_dir /mnt/Data/converted \
+    --hdf5_dir /mnt/Data/converted_dionisis \
     --tasks cubes
 
 """
