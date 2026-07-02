@@ -1,0 +1,55 @@
+services:
+  base_collector: &base_collector
+    image: data_collector
+    build:
+      context: .
+      dockerfile: .ci/Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    network_mode: host
+    ipc: host
+    pid: host
+    privileged: true
+    ulimits:
+      rtprio: 99
+    environment:
+      - DISPLAY=${DISPLAY}
+      - XAUTHORITY=${XAUTHORITY}
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./postprocess:/postprocess
+      - ./scripts:/scripts
+      - ./assets:/assets
+      - /mnt/Data:/mnt/Data
+      - ./datasets:/datasets
+      - ./configs:/configs
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/snd:/dev/snd
+      - /dev/input:/dev/input
+      - /dev/bus/usb:/dev/bus/usb
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: tail -f /dev/null
+
+  franka:
+    <<: *base_collector
+    container_name: data_collector_franka
+    environment:
+      - ROS_DOMAIN_ID=39
+      - CYCLONEDDS_URI=file:///configs/franka_cyclonedds.xml
+
+  tiago:
+    <<: *base_collector
+    container_name: data_collector_tiago
+    environment:
+      - ROS_DOMAIN_ID=2
+      - CYCLONEDDS_URI=file:///configs/tiago_cyclonedds.xml

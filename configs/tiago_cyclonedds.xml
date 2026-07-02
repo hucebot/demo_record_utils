@@ -1,0 +1,15 @@
+<CycloneDDS>
+  <Domain>
+    <General>
+      <Interfaces>
+        <NetworkInterface name="enx607d09178f25" priority="1" />
+      </Interfaces>
+      <MaxMessageSize>1400B</MaxMessageSize>
+      <AllowMulticast>true</AllowMulticast>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>500</MaxAutoParticipantIndex>
+    </Discovery>
+  </Domain>
+</CycloneDDS>
