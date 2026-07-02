@@ -171,3 +171,6 @@ cython_debug/
 .pypirc
 *.bag
 *.h5
+
+*.rrd
+datasets/

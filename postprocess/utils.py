@@ -5,7 +5,8 @@ Utility functions to handle rosbags.
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
 import numpy as np
-from rosbags.highlevel import AnyReader
+# from rosbags.highlevel import AnyReader
+from rosbags.rosbag2 import Reader
 from rosbags.typesys import Stores, get_typestore, get_types_from_msg
 
 from std_msgs.msg import Header
@@ -558,108 +559,93 @@ def getLastDataAtRefTimes(reference_times, data_times, data_dict):
 
     return last_data_dict
 
+from rosbags.rosbag2 import Reader
+
 def extract_all_topics_single_pass(bagpaths, selected_topics, topic_types, verbose=False):
-    """Opens the bag ONCE and routes all messages chronologically to their respective arrays."""
+    """Opens the bag files sequentially using Reader for maximum performance."""
     if verbose:
-        print(f"Starting single-pass extraction for {len(bagpaths)} bags...")
+        print(f"Starting optimized single-pass extraction for {len(bagpaths)} bags...")
 
     typestore = get_typestore(Stores.ROS2_HUMBLE)
     typestore.register(get_types_from_msg(GRIPPER_WIDTH_MSG, 'custom_msgs/msg/GripperWidth'))
     bridge = CvBridge()
 
-    # Pre-allocate dictionary for all topics
-    # Format: {ros_topic: {"times": [], "results": {hdf5_name: []}}}
-    extracted_data = {}
-    for ros_topic, hdf5_mappings in selected_topics.items():
-        extracted_data[ros_topic] = {
-            "times": [],
-            "results": {hdf5_name: [] for hdf5_name in hdf5_mappings.keys()}
-        }
+    # Pre-allocate
+    extracted_data = {t: {"times": [], "results": {h: [] for h in m.keys()}}
+                      for t, m in selected_topics.items()}
 
-    # OPEN THE BAGS EXACTLY ONCE
-    with AnyReader(bagpaths, default_typestore=typestore) as reader:
-        # Only listen to topics we care about to save CPU
-        connections = [x for x in reader.connections if x.topic in selected_topics.keys()]
+    # OPEN EACH BAG INDIVIDUALLY
+    for bagpath in bagpaths:
+        with Reader(bagpath) as reader:
+            # Filter connections
+            connections = [x for x in reader.connections if x.topic in selected_topics.keys()]
 
-        for connection, timestamp, rawdata in reader.messages(connections=connections):
-            topic = connection.topic
-            msg = reader.deserialize(rawdata, connection.msgtype)
-            msg_type = topic_types[topic]
-            hdf5_mappings = selected_topics[topic]
+            for connection, timestamp, rawdata in reader.messages(connections=connections):
+                topic = connection.topic
+                # FAST DESERIALIZATION
+                msg = typestore.deserialize_cdr(rawdata, connection.msgtype)
 
-            # Save timestamp
-            t_ms = int(timestamp * 1e-6)
-            extracted_data[topic]["times"].append(t_ms)
+                extracted_data[topic]["times"].append(int(timestamp * 1e-6))
 
-            # Route data based on topic type
-            if msg_type == "sensor_msgs/msg/CompressedImage":
-                img_array = fixed_compressed_imgmsg_to_cv2(msg)
-                if img_array.ndim == 3 and img_array.shape[-1] == 3:
-                    img_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
-                for hdf_name in hdf5_mappings.keys():
-                    extracted_data[topic]["results"][hdf_name].append(img_array)
+                hdf5_mappings = selected_topics[topic]
+                msg_type = topic_types[topic]
 
-            elif msg_type == "sensor_msgs/msg/Image":
-                if msg.encoding == "16UC1":
-                    msg.encoding = "mono16"
-                img_array = bridge.imgmsg_to_cv2(msg)
-                for hdf_name in hdf5_mappings.keys():
-                    extracted_data[topic]["results"][hdf_name].append(img_array)
+                # ROUTE (Images stored RAW for batch processing later)
+                if msg_type in ["sensor_msgs/msg/CompressedImage", "sensor_msgs/msg/Image"]:
+                    for hdf_name in hdf5_mappings.keys():
+                        # Extract the data NOW, not later
+                        if msg_type == "sensor_msgs/msg/CompressedImage":
+                            # Store the raw bytes, not the whole message
+                            extracted_data[topic]["results"][hdf_name].append(msg.data)
+                        else:
+                            # If raw Image, decode to bytes or array immediately
+                            extracted_data[topic]["results"][hdf_name].append(bridge.imgmsg_to_cv2(msg))
 
-            elif msg_type == "sensor_msgs/msg/JointState":
-                for hdf_name, args in hdf5_mappings.items():
-                    if not args or args.get("physical_quantity") == "position":
-                        extracted_data[topic]["results"][hdf_name].append(msg.position)
-                    elif args.get("physical_quantity") == "velocity":
-                        extracted_data[topic]["results"][hdf_name].append(msg.velocity)
-                    elif args.get("physical_quantity") == "effort":
-                        extracted_data[topic]["results"][hdf_name].append(msg.effort)
+                # ROUTE (Numeric data saved immediately)
+                elif msg_type == "sensor_msgs/msg/JointState":
+                    for hdf_name, args in hdf5_mappings.items():
+                        qty = args.get("physical_quantity", "position")
+                        val = getattr(msg, qty if qty != "position" else "position")
+                        extracted_data[topic]["results"][hdf_name].append(val)
+                elif msg_type == "geometry_msgs/msg/PoseStamped":
+                    pose_arr = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z,
+                                msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w]
+                    for hdf_name in hdf5_mappings.keys():
+                        extracted_data[topic]["results"][hdf_name].append(pose_arr)
+                elif msg_type == "geometry_msgs/msg/WrenchStamped":
+                    for hdf_name, args in hdf5_mappings.items():
+                        qty = args.get("physical_quantity", "torque")
+                        val = [msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z] if qty == "force" else \
+                              [msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z]
+                        extracted_data[topic]["results"][hdf_name].append(val)
+                elif msg_type == "custom_msgs/msg/GripperWidth":
+                    for hdf_name in hdf5_mappings.keys():
+                        extracted_data[topic]["results"][hdf_name].append(msg.width)
+                elif msg_type == "geometry_msgs/msg/PointStamped":
+                    for hdf_name in hdf5_mappings.keys():
+                        extracted_data[topic]["results"][hdf_name].append(msg.point.x)
 
-            elif msg_type == "geometry_msgs/msg/PoseStamped":
-                pose_arr = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z,
-                            msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w]
-                for hdf_name in hdf5_mappings.keys():
-                    extracted_data[topic]["results"][hdf_name].append(pose_arr)
-
-            elif msg_type == "geometry_msgs/msg/WrenchStamped":
-                for hdf_name, args in hdf5_mappings.items():
-                    if not args or args.get("physical_quantity") == "torque":
-                        extracted_data[topic]["results"][hdf_name].append([msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z])
-                    elif args.get("physical_quantity") == "force":
-                        extracted_data[topic]["results"][hdf_name].append([msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z])
-
-            elif msg_type == "custom_msgs/msg/GripperWidth":
-                for hdf_name in hdf5_mappings.keys():
-                    extracted_data[topic]["results"][hdf_name].append(msg.width)
-
-            elif msg_type == "geometry_msgs/msg/PointStamped":
-                for hdf_name in hdf5_mappings.keys():
-                    extracted_data[topic]["results"][hdf_name].append(msg.point.x)
-
-    # Format into correct numpy array shapes
+    # BATCH PROCESS & FORMAT
     topic_times = {}
     final_data = {}
-
     for topic, data_dict in extracted_data.items():
-        # Timestamps
-        t_arr = np.array(data_dict["times"])
-        topic_times[topic] = np.expand_dims(t_arr, axis=-1)
-
-        # Values
+        topic_times[topic] = np.expand_dims(np.array(data_dict["times"]), axis=-1)
         final_data[topic] = {}
         msg_type = topic_types[topic]
 
         for hdf_name, res_list in data_dict["results"].items():
             if msg_type in ["sensor_msgs/msg/CompressedImage", "sensor_msgs/msg/Image"]:
-                arr = np.array(res_list)
-                if arr.ndim == 3:  # depth/grayscale images
-                    arr = np.expand_dims(arr, axis=-1)
-                final_data[topic][hdf_name] = arr
+                processed = []
+                for msg in res_list:
+                    img = fixed_compressed_imgmsg_to_cv2(msg) if msg_type == "sensor_msgs/msg/CompressedImage" else bridge.imgmsg_to_cv2(msg)
+                    if img.ndim == 3 and img.shape[-1] == 3: img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    # RESIZE HERE (One-pass batch)
+                    processed.append(cv2.resize(img, (256, 256), interpolation=cv2.INTER_AREA))
+                arr = np.array(processed)
+                final_data[topic][hdf_name] = np.expand_dims(arr, axis=-1) if arr.ndim == 3 else arr
             else:
                 arr = np.array(res_list, dtype="float32")
-                if arr.ndim == 1:
-                    arr = np.expand_dims(arr, axis=-1)
-                final_data[topic][hdf_name] = arr
+                final_data[topic][hdf_name] = np.expand_dims(arr, axis=-1) if arr.ndim == 1 else arr
 
     return topic_times, final_data
 
@@ -736,52 +722,54 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
     infos = []
     fps_tot_mean = 0
 
-    for demo_idx, demo_folder in enumerate(ep_names):
-        print(f"Processing demo {demo_idx + 1}/{num_bags}")
-        demo_label = f"demo_{demo_idx}"
-        demo_start_time = time.time()
+    with h5py.File(f"{desired_path / task}.h5", "a") as h5file:
+        data_root = h5file.require_group("data")
+        for demo_idx, demo_folder in enumerate(ep_names):
+            print(f"Processing demo {demo_idx + 1}/{num_bags}")
+            demo_label = f"demo_{demo_idx}"
+            if demo_label in data_root: continue
+            demo_start_time = time.time()
 
-        # Read metadata (Same as before)
-        bagpaths, topic_types = [], {}
-        for file in (dataset_path / task / demo_folder).iterdir():
-            if str(file)[-4:] == ".db3":
-                bagpaths.append(file.resolve())
-            elif str(file).endswith("metadata.yaml") or str(file).endswith("metadata.yml"):
-                with open(file, "r") as metadata_file:
-                    metadata = yaml.safe_load(metadata_file)
-                    for topic_info in metadata["rosbag2_bagfile_information"]["topics_with_message_count"]:
-                        topic_types[topic_info["topic_metadata"]["name"]] = topic_info["topic_metadata"]["type"]
-                    for topic_name in selected_topics.keys():
-                        if topic_name not in topic_types.keys():
-                            print(f"{bcolors.FAIL}Error: Topic {topic_name} missing!{bcolors.ENDC}")
-                            return infos, fps_tot_mean
+            # Read metadata (Same as before)
+            bagpaths, topic_types = [], {}
+            for file in (dataset_path / task / demo_folder).iterdir():
+                if str(file)[-4:] == ".db3":
+                    bagpaths.append(file.resolve())
+                elif str(file).endswith("metadata.yaml") or str(file).endswith("metadata.yml"):
+                    with open(file, "r") as metadata_file:
+                        metadata = yaml.safe_load(metadata_file)
+                        for topic_info in metadata["rosbag2_bagfile_information"]["topics_with_message_count"]:
+                            topic_types[topic_info["topic_metadata"]["name"]] = topic_info["topic_metadata"]["type"]
+                        for topic_name in selected_topics.keys():
+                            if topic_name not in topic_types.keys():
+                                print(f"{bcolors.FAIL}Error: Topic {topic_name} missing!{bcolors.ENDC}")
+                                return infos, fps_tot_mean
 
-        bagpaths = sorted(bagpaths, key=lambda p: int(p.stem.split('_')[-1]))
+            bagpaths = sorted(bagpaths, key=lambda p: int(p.stem.split('_')[-1]))
 
-        # --- THE SPEED UP: EXTRACT EVERYTHING ONCE ---
-        all_topic_times, all_topic_data = extract_all_topics_single_pass(
-            bagpaths, selected_topics, topic_types, verbose=verbose
-        )
+            # --- THE SPEED UP: EXTRACT EVERYTHING ONCE ---
+            all_topic_times, all_topic_data = extract_all_topics_single_pass(
+                bagpaths, selected_topics, topic_types, verbose=verbose
+            )
 
-        # Handle Reference Topic
-        if reference_topic_name not in all_topic_times:
-            print(f"{bcolors.WARNING}Warning: Ref topic not found. Using last available.{bcolors.ENDC}")
-            reference_topic_name = list(all_topic_times.keys())[-1]
+            # Handle Reference Topic
+            if reference_topic_name not in all_topic_times:
+                print(f"{bcolors.WARNING}Warning: Ref topic not found. Using last available.{bcolors.ENDC}")
+                reference_topic_name = list(all_topic_times.keys())[-1]
 
-        reference_topic_times = all_topic_times[reference_topic_name]
+            reference_topic_times = all_topic_times[reference_topic_name]
 
-        # Create mask to remove duplicates
-        valid_mask = np.pad(np.diff(reference_topic_times[:,0]), (0,1), mode='constant', constant_values=1) > 0
-        timestamps = reference_topic_times[valid_mask] - reference_topic_times[valid_mask][0]
-        timestamps = (timestamps * 1e-3).astype("float32")
+            # Create mask to remove duplicates
+            valid_mask = np.pad(np.diff(reference_topic_times[:,0]), (0,1), mode='constant', constant_values=1) > 0
+            timestamps = reference_topic_times[valid_mask] - reference_topic_times[valid_mask][0]
+            timestamps = (timestamps * 1e-3).astype("float32")
 
-        fps_mean = np.mean(1/np.diff(timestamps[:,0])).item()
-        fps_std = np.std(1/np.diff(timestamps[:,0])).item()
-        print(f"fps estimated: {fps_mean:.2f} +/- {fps_std:.2f}")
-        fps_tot_mean = (fps_tot_mean*demo_idx+fps_mean)/(demo_idx+1)
+            fps_mean = np.mean(1/np.diff(timestamps[:,0])).item()
+            fps_std = np.std(1/np.diff(timestamps[:,0])).item()
+            print(f"fps estimated: {fps_mean:.2f} +/- {fps_std:.2f}")
+            fps_tot_mean = (fps_tot_mean*demo_idx+fps_mean)/(demo_idx+1)
 
-        with h5py.File(f"{desired_path / task}.h5", "a") as h5file:
-            data_root = h5file.require_group("data")
+
             ep_grp = data_root.create_group(demo_label, track_order=True)
             ep_grp.create_dataset("timestamps", data=timestamps)
 
@@ -840,8 +828,8 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
                 obs_arr = v.astype(np.uint8, copy=False) if "image" in k or "cam" in k else v.astype(np.float32, copy=False)
                 obs_grp.create_dataset(k, data=obs_arr)
 
-        print(f"     data saved as demo '{demo_label}' in '{desired_path / task}.h5'")
-        print(f"     time: {(time.time() - demo_start_time):.2f} seconds")
+            print(f"     data saved as demo '{demo_label}' in '{desired_path / task}.h5'")
+            print(f"     time: {(time.time() - demo_start_time):.2f} seconds")
 
     return infos, fps_tot_mean
 
