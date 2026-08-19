@@ -134,19 +134,19 @@ class StreamDeckBase(Node):
 
             # --- ASYNC BACKGROUND CONVERSION ---
             # Fires off the fast-skip conversion without blocking the Stream Deck
-            subprocess.Popen([
-                "python3", "/postprocess/inria_franka_rosbag_to_hdf5.py",
-                "--rosbag_folder", self.bag_base_dir,
-                "--hdf5_dir", "/datasets/hdf5_converted",
-                "--config", "/postprocess/config_rosbag2hdf5/config.yaml",
-                "--tasks", self.demo_name
-            ])
-            # -----------------------------------
+            # subprocess.Popen([
+            #     "python3", "/postprocess/inria_franka_rosbag_to_hdf5.py",
+            #     "--rosbag_folder", self.bag_base_dir,
+            #     "--hdf5_dir", "/datasets/hdf5_converted",
+            #     "--config", "/postprocess/config_rosbag2hdf5/config.yaml",
+            #     "--tasks", self.demo_name
+            # ])
+            # # -----------------------------------
 
-            if self.motion_flash_timer:
-                self.motion_flash_timer.cancel()
-                self.motion_flash_timer = None
-            self.render_all_buttons()
+            # if self.motion_flash_timer:
+            #     self.motion_flash_timer.cancel()
+            #     self.motion_flash_timer = None
+            # self.render_all_buttons()
 
     def _flash_motion_buttons(self):
         self.flash_state = not self.flash_state
