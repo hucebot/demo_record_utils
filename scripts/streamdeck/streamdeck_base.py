@@ -57,6 +57,7 @@ class StreamDeckBase(Node):
         try:
             self.deck = DeviceManager().enumerate()[0]
             self.deck.open()
+            print(self.deck.device.device_info)
             self.deck.reset()
             self.deck.set_brightness(100)
             self.rows, self.cols = self.deck.key_layout()

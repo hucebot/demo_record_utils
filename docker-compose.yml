@@ -46,6 +46,7 @@ services:
     environment:
       - ROS_DOMAIN_ID=39
       - CYCLONEDDS_URI=file:///configs/franka_cyclonedds.xml
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 
   tiago:
     <<: *base_collector
@@ -53,3 +54,4 @@ services:
     environment:
       - ROS_DOMAIN_ID=2
       - CYCLONEDDS_URI=file:///configs/tiago_cyclonedds.xml
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
