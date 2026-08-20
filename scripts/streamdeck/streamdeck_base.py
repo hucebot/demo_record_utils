@@ -132,8 +132,8 @@ class StreamDeckBase(Node):
 
             self.get_logger().info("Recording Stopped and Saved. Triggering background conversion...")
 
-            # --- ASYNC BACKGROUND CONVERSION ---
-            # Fires off the fast-skip conversion without blocking the Stream Deck
+            # # --- ASYNC BACKGROUND CONVERSION ---
+            # # Fires off the fast-skip conversion without blocking the Stream Deck
             # subprocess.Popen([
             #     "python3", "/postprocess/inria_franka_rosbag_to_hdf5.py",
             #     "--rosbag_folder", self.bag_base_dir,
@@ -143,10 +143,10 @@ class StreamDeckBase(Node):
             # ])
             # # -----------------------------------
 
-            # if self.motion_flash_timer:
-            #     self.motion_flash_timer.cancel()
-            #     self.motion_flash_timer = None
-            # self.render_all_buttons()
+            if self.motion_flash_timer:
+                self.motion_flash_timer.cancel()
+                self.motion_flash_timer = None
+            self.render_all_buttons()
 
     def _flash_motion_buttons(self):
         self.flash_state = not self.flash_state
