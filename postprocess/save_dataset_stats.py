@@ -7,6 +7,17 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 from openpyxl.worksheet.datavalidation import DataValidation
 
+
+# TODO:
+
+# 1) ADD LIBS IN DOCKERFILE
+
+# 10 no
+# 5 si
+# 15 no
+# 20 si
+# 5 no
+
 """
 Requirements: pip install h5py pandas openpyxl
 Usage example: python save_dataset_stats.py --hdf5_path ../datasets/hdf5_converted/dataset_task1.h5
@@ -36,6 +47,7 @@ def get_all_dataset_info(group, prefix=''):
 
 
 def create_annotation_excel(hdf5_path: str):
+
     if not os.path.exists(hdf5_path):
         raise FileNotFoundError(f"HDF5 dataset not found at path: {hdf5_path}")
 
@@ -51,6 +63,7 @@ def create_annotation_excel(hdf5_path: str):
 
     # Open HDF5 following the style of calc_training_steps (accessing f['data'])
     with h5py.File(hdf5_path, "r") as f:
+
         # Check if 'data' group exists, otherwise fallback to root keys
         if "data" in f and isinstance(f["data"], h5py.Group):
             data_grp = f["data"]
@@ -63,6 +76,7 @@ def create_annotation_excel(hdf5_path: str):
         demos = sorted(demos, key=natsort_key)
 
         for idx, demo_name in enumerate(demos):
+
             ep_group = data_grp[demo_name]
 
             # 1. N_FRAMES: Try fetching from attributes, fallback to shape of first dataset
@@ -74,14 +88,14 @@ def create_annotation_excel(hdf5_path: str):
                 n_frames = ds_items[0].shape[0] if ds_items and len(ds_items[0].shape) > 0 else None
 
             # 2. RECOVERY FLAG
-            is_recovery = "False"
-            if "recovery" in ep_group:
-                is_recovery = str(bool(ep_group["recovery"][()]))
+            with_recovery = "False"
+            if "with_recovery" in ep_group.attrs:
+                with_recovery = str(bool(ep_group.attrs["with_recovery"][()]))
 
             episodes_list.append({
                 "Episode": demo_name,
                 "N_frames": n_frames,
-                "Recovery": is_recovery
+                "Recovery": with_recovery
             })
 
             # Fetch keys and frequency ONLY from the first episode (idx == 0)
@@ -99,6 +113,7 @@ def create_annotation_excel(hdf5_path: str):
     n_episodes = len(episodes_list)
     valid_frames = [ep["N_frames"] for ep in episodes_list]
     avg_frames = round(sum(valid_frames) / len(valid_frames), 1) if valid_frames else ""
+    total_recoveries = sum(1 for ep in episodes_list if ep["Recovery"] == "True")
 
     # Combine episodes and keys independently line by line
     max_rows = max(len(episodes_list), len(formatted_keys))
@@ -112,6 +127,7 @@ def create_annotation_excel(hdf5_path: str):
             "Episode": ep_info["Episode"],
             "N_frames": ep_info["N_frames"],
             "Recovery": ep_info["Recovery"],
+            "N_recoveries": total_recoveries if i == 0 else "",
             "N_episodes": n_episodes if i == 0 else "",
             "avrg_frames / episode": avg_frames if i == 0 else "",
             "Keys / Actions names": key_info,

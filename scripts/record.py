@@ -28,7 +28,8 @@ ROBOT_CONFIGS = {
             "/bota_ft_sensor/wrench_filtered",
             "/cartesian_impedance/joint_state",
             "/panda_gripper/gripper_command",
-            "/panda_gripper/width"
+            "/panda_gripper/width",
+            "/recording/with_recovery"
         ]
     },
     "tiago": {

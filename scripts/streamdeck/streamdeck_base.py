@@ -11,6 +11,7 @@ from rclpy.node import Node
 from PIL import Image, ImageDraw, ImageFont
 from StreamDeck.DeviceManager import DeviceManager
 from StreamDeck.ImageHelpers import PILHelper
+from std_msgs.msg import Bool
 
 class StreamDeckBase(Node):
     def __init__(self, node_name, config_filename, config):
@@ -24,6 +25,7 @@ class StreamDeckBase(Node):
         self.deck_lock = threading.Lock()
 
         # --- Bag Recording Setup ---
+
         self.demo_name = config.get("demo_name", "default_demo")
         self.bag_base_dir = config.get("bag_base_dir", "/datasets")
         self.record_topics = config.get("topics", [])
@@ -35,16 +37,22 @@ class StreamDeckBase(Node):
         self.motion_flash_timer = None
         self.flash_state = False
 
+        # Flag to label demo with "recovery"
+        self.is_recovery_flag = False
+        self.pub_recovery = self.create_publisher(Bool, '/recording/with_recovery', 10)
+        
         # Core Colors for the 3 allowed buttons
         self.colors = {
-            "inactive":     "#E2F0CB",
-            "active":       "#C7CEEA",
-            "recording":    "#FF9999",
-            "cancel":       "#FFB7B2",
-            "home":         "#A0E7E5",
-            "text":         "#333333",
-            "border":       "#F9F9F9",
-            "error":        "#FF0000"
+            "inactive":        "#E2F0CB",
+            "active":          "#C7CEEA",
+            "recording":       "#FF9999",
+            "cancel":          "#FFB7B2",
+            "home":            "#A0E7E5",
+            "text":            "#333333",
+            "border":          "#F9F9F9",
+            "error":           "#FF0000",
+            "recovery":        "#FCD34D",
+            "recovery_active": "#F97316"
         }
 
         if not os.path.exists(self.config_path):
@@ -77,7 +85,7 @@ class StreamDeckBase(Node):
         return (row * self.cols) + col
 
     def init_buttons(self):
-        """Maps the 3 core buttons. Child classes can extend this if needed."""
+        """Maps the core buttons."""
         for label, coords in self.button_layout.items():
             key_index = self._get_key_index(coords[0], coords[1])
             bg_color = self.colors["inactive"]
@@ -91,6 +99,10 @@ class StreamDeckBase(Node):
                 bg_color = self.colors["cancel"]
                 display_label = "CANCEL\nRECORD"
                 callback = self.press_cancel_recording
+            elif label == "WITH_RECOVERY":
+                bg_color = self.colors["recovery"]
+                display_label = "WITH\nRECOVERY"
+                callback = self.press_with_recovery
             elif label == "HOME":
                 bg_color = self.colors["home"]
                 callback = self.press_home
@@ -143,6 +155,9 @@ class StreamDeckBase(Node):
             # ])
             # # -----------------------------------
 
+            # RESET RECOVERY STATE
+            self._reset_recovery_state()
+
             if self.motion_flash_timer:
                 self.motion_flash_timer.cancel()
                 self.motion_flash_timer = None
@@ -155,6 +170,7 @@ class StreamDeckBase(Node):
             self.update_button_visual(self.recording_key_index, "RECORDING", bg, self.colors["text"])
 
     def press_cancel_recording(self, key_index):
+
         self.get_logger().info("Canceling Recording...")
 
         # STOP AND DELETE
@@ -169,6 +185,9 @@ class StreamDeckBase(Node):
 
         self.record_active = False
 
+        # RESET RECOVERY STATE
+        self._reset_recovery_state()
+
         if self.motion_flash_timer:
             self.motion_flash_timer.cancel()
             self.motion_flash_timer = None
@@ -180,6 +199,39 @@ class StreamDeckBase(Node):
         """To be overridden by robot-specific classes."""
         self.get_logger().warn("Home button pressed, but homing logic is not implemented in the base class.")
         self.press_default(key_index)
+
+    def press_with_recovery(self, key_index):
+        
+        """Toggle recovery state and publish state on ROS 2 topic."""
+        
+        self.is_recovery_flag = not self.is_recovery_flag
+        
+        msg = Bool()
+        msg.data = self.is_recovery_flag
+        self.pub_recovery.publish(msg)
+        
+        # Change button color
+        bg_color = self.colors["recovery_active"] if self.is_recovery_flag else self.colors["recovery"]
+        self.buttons[key_index]["bg_color"] = bg_color
+        self.update_button_visual(key_index, self.buttons[key_index]["label"], bg_color, self.colors["text"])
+        
+        self.get_logger().info(f"Recovery Flag Toggled: {self.is_recovery_flag}")
+
+    def _reset_recovery_state(self):
+
+        """Reset the recovery flag and update the button visuals."""
+
+        self.is_recovery_flag = False
+        
+        # Pubblica False sul topic
+        msg = Bool()
+        msg.data = False
+        self.pub_recovery.publish(msg)
+        
+        # Reset color
+        for k_idx, btn_info in self.buttons.items():
+            if "WITH\nRECOVERY" in btn_info["label"]:
+                btn_info["bg_color"] = self.colors["recovery"]
 
     # --- UI & Hardware Visuals ---
 

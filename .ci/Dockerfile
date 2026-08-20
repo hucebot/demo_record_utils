@@ -97,6 +97,8 @@ RUN pip install -e .
 RUN pip install --force-reinstall -v "datasets==3.6.0"
 RUN pip install matplotlib
 RUN pip install streamdeck
+RUN pip install openpyxl
+RUN pip install pandas
 
 # TODO: move these in the deps, they are here for faster build
 RUN apt-get update && apt-get install -y ros-${ROS_DISTRO}-sensor-msgs \

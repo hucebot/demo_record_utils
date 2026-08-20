@@ -2,7 +2,7 @@
 # reference_topic_name: /camera/camera/depth/image_rect_raw
 reference_topic_name: /webcam1/image_raw/compressed
 
-selected_topics_conversion:
+selected_topics_conversion: 
   
   # OBSERVATION
   # Vision
@@ -45,3 +45,7 @@ selected_topics_conversion:
     from_rosbag_topic_name: /cartesian_impedance/cartesian_pos_des_filt
   - hdf5_name: actions/desired_gripper_width
     from_rosbag_topic_name: /panda_gripper/gripper_command
+
+  # META 
+  - hdf5_name: with_recovery
+    from_rosbag_topic_name: /recording/with_recovery # in case this name changes, you need to change it also in postprocess/utils.py

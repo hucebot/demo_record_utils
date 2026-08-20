@@ -5,10 +5,8 @@ Utility functions to handle rosbags.
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
 import numpy as np
-# from rosbags.highlevel import AnyReader
 from rosbags.rosbag2 import Reader
 from rosbags.typesys import Stores, get_typestore, get_types_from_msg
-
 from std_msgs.msg import Header
 
 import h5py
@@ -16,6 +14,9 @@ import time
 from os import walk
 import yaml
 import re
+
+# topic used to store episode "with_recovery" flag
+recovery_topic = "/recording/with_recovery"
 
 # Your custom message definition
 # check: https://ternaris.gitlab.io/rosbags/examples/register_types.html#from-multiple-files
@@ -575,9 +576,9 @@ def extract_all_topics_single_pass(bagpaths, selected_topics, topic_types, verbo
                       for t, m in selected_topics.items()}
 
     # OPEN EACH BAG INDIVIDUALLY
+
     for bagpath in bagpaths:
         with Reader(bagpath) as reader:
-            # Filter connections
             connections = [x for x in reader.connections if x.topic in selected_topics.keys()]
 
             for connection, timestamp, rawdata in reader.messages(connections=connections):
@@ -624,6 +625,11 @@ def extract_all_topics_single_pass(bagpaths, selected_topics, topic_types, verbo
                 elif msg_type == "geometry_msgs/msg/PointStamped":
                     for hdf_name in hdf5_mappings.keys():
                         extracted_data[topic]["results"][hdf_name].append(msg.point.x)
+
+                # ROUTE (Recovery data)
+                elif msg_type == "std_msgs/msg/Bool":
+                    for hdf_name in hdf5_mappings.keys():
+                        extracted_data[topic]["results"][hdf_name].append(msg.data)
 
     # BATCH PROCESS & FORMAT
     topic_times = {}
@@ -723,8 +729,11 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
     fps_tot_mean = 0
 
     with h5py.File(f"{desired_path / task}.h5", "a") as h5file:
+
         data_root = h5file.require_group("data")
+
         for demo_idx, demo_folder in enumerate(ep_names):
+
             print(f"Processing demo {demo_idx + 1}/{num_bags}")
             demo_label = f"demo_{demo_idx}"
             if demo_label in data_root: continue
@@ -769,7 +778,6 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
             print(f"fps estimated: {fps_mean:.2f} +/- {fps_std:.2f}")
             fps_tot_mean = (fps_tot_mean*demo_idx+fps_mean)/(demo_idx+1)
 
-
             ep_grp = data_root.create_group(demo_label, track_order=True)
             ep_grp.create_dataset("timestamps", data=timestamps)
 
@@ -779,6 +787,10 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
 
             # --- PROCESS THE ALREADY EXTRACTED DATA ---
             for topic_name in selected_topics.keys():
+
+                if topic_name == recovery_topic:
+                    continue # no need to be synch with ref time
+
                 topic_times = all_topic_times[topic_name]
                 topic_data = all_topic_data[topic_name]
 
@@ -810,8 +822,25 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
                     action_parts[i] = action_parts[i][valid_mask]
 
             ep_grp.attrs["num_samples"] = int(timestamps.shape[0])
+
             if len(action_part_names) > 0:
                 ep_grp.attrs["action_parts"] = ",".join(action_part_names)
+
+            # WITH_RECOVERY extraction
+
+            with_recovery_val = False
+
+            if recovery_topic in all_topic_data:
+
+                # Get all values on recovery topic
+                rec_results = all_topic_data[recovery_topic]
+
+                for hdf_k, vals in rec_results.items():
+                    if len(vals) > 0 and np.any(vals):
+                        with_recovery_val = True
+                        break
+
+            ep_grp.attrs["with_recovery"] = with_recovery_val
 
             if len(action_parts) == 0:
                 actions = np.zeros((timestamps.shape[0], 0), dtype=np.float32)

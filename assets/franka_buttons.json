@@ -2,5 +2,6 @@
     "HOME": [0, 0],
     "TARE_FTS": [0, 2],
     "RECORD": [7, 3],
-    "CANCEL_RECORDING": [6, 3]
+    "CANCEL_RECORDING": [6, 3],
+    "WITH_RECOVERY": [4, 2]
 }
