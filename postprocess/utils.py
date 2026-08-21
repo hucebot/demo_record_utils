@@ -723,7 +723,8 @@ def add_config(fps_used, infos, dir, default=False):
 def create_task(dataset_path, desired_path, task, reference_topic_name, selected_topics, verbose=False):
 
     print(f"Processing task {task}")
-    ep_names = next(walk(dataset_path / task))[1]
+    # ep_names = next(walk(dataset_path / task))[1]
+    ep_names = sorted(next(walk(dataset_path / task))[1]) # real alfanumerical order based on rosbag names
     num_bags = len(ep_names)
     infos = []
     fps_tot_mean = 0

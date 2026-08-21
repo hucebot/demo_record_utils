@@ -7,16 +7,8 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 from openpyxl.worksheet.datavalidation import DataValidation
 
-
 # TODO:
-
-# 1) ADD LIBS IN DOCKERFILE
-
-# 10 no
-# 5 si
-# 15 no
-# 20 si
-# 5 no
+# 1) REBUILD FOR CHANGE IN DOCKERFILE
 
 """
 Requirements: pip install h5py pandas openpyxl
@@ -51,7 +43,6 @@ def create_annotation_excel(hdf5_path: str):
     if not os.path.exists(hdf5_path):
         raise FileNotFoundError(f"HDF5 dataset not found at path: {hdf5_path}")
 
-    # Derive output filename from the input HDF5 path (e.g., dataset_task1.xlsx)
     base_name = os.path.splitext(os.path.basename(hdf5_path))[0]
     excel_output_path = f"{base_name}.xlsx"
 
@@ -59,12 +50,11 @@ def create_annotation_excel(hdf5_path: str):
 
     episodes_list = []
     formatted_keys = []
-    frequency_val = ""
+    frequency_val = 30.0
 
-    # Open HDF5 following the style of calc_training_steps (accessing f['data'])
+    # Open HDF5 file
     with h5py.File(hdf5_path, "r") as f:
 
-        # Check if 'data' group exists, otherwise fallback to root keys
         if "data" in f and isinstance(f["data"], h5py.Group):
             data_grp = f["data"]
             demos = [k for k in data_grp.keys() if k.startswith("demo_")]
@@ -72,14 +62,13 @@ def create_annotation_excel(hdf5_path: str):
             data_grp = f
             demos = [k for k in data_grp.keys() if isinstance(data_grp[k], h5py.Group)]
 
-        # Apply natural sorting to episode keys
         demos = sorted(demos, key=natsort_key)
 
         for idx, demo_name in enumerate(demos):
 
             ep_group = data_grp[demo_name]
 
-            # 1. N_FRAMES: Try fetching from attributes, fallback to shape of first dataset
+            # 1. Fetch N_FRAMES per episode
             if "num_samples" in ep_group.attrs:
                 n_frames = ep_group.attrs["num_samples"]
             else:
@@ -100,20 +89,27 @@ def create_annotation_excel(hdf5_path: str):
 
             # Fetch keys and frequency ONLY from the first episode (idx == 0)
             if idx == 0:
-                frequency_val = ep_group.attrs.get("fps", ep_group.attrs.get("frequency", ""))
+                raw_freq = ep_group.attrs.get("fps", ep_group.attrs.get("frequency", None))
+                if raw_freq is not None and float(raw_freq) > 0:
+                    frequency_val = float(raw_freq)
+
                 datasets = get_all_dataset_info(ep_group)
                 for ds_name, ds_obj in datasets.items():
                     shape = ds_obj.shape
-                    # Ignore the first dimension (n_frames) if multi-dimensional
                     feature_shape = shape[1:] if len(shape) > 1 else shape
                     shape_str = f"({', '.join(map(str, feature_shape))})" if feature_shape else "()"
                     formatted_keys.append(f"{ds_name} {shape_str}")
 
     # Compute global dataset metrics
     n_episodes = len(episodes_list)
-    valid_frames = [ep["N_frames"] for ep in episodes_list]
-    avg_frames = round(sum(valid_frames) / len(valid_frames), 1) if valid_frames else ""
+    valid_frames = [ep["N_frames"] for ep in episodes_list if ep["N_frames"] is not None]
+    n_total_frames = sum(valid_frames) if valid_frames else 0
+    avg_frames = round(n_total_frames / len(valid_frames), 1) if valid_frames else ""
     total_recoveries = sum(1 for ep in episodes_list if ep["Recovery"] == "True")
+
+    # Dynamic Excel formula referencing cell F2 (N_total_frames) and cell I2 (Frequency)
+    # Formula: =ROUND(F2 / (I2 * 60), 2)
+    duration_excel_formula = "=ROUND(F2/(I2*60), 2)" if n_total_frames > 0 else 0.0
 
     # Combine episodes and keys independently line by line
     max_rows = max(len(episodes_list), len(formatted_keys))
@@ -129,13 +125,17 @@ def create_annotation_excel(hdf5_path: str):
             "Recovery": ep_info["Recovery"],
             "N_recoveries": total_recoveries if i == 0 else "",
             "N_episodes": n_episodes if i == 0 else "",
+            "N_total_frames": n_total_frames if i == 0 else "",
             "avrg_frames / episode": avg_frames if i == 0 else "",
             "Keys / Actions names": key_info,
             "Frequency (Hz)": frequency_val if i == 0 else "",
-            "Rotations convention": "",
-            "Positions convention": "",
-            "Action order": "",
-            "Task description": ""
+            "Dataset duration [minutes]": duration_excel_formula if i == 0 else "",
+            "Rotations convention": "Quaternion-WXYZ" if i == 0 else "",
+            "Positions convention": "Absolute" if i == 0 else "",
+            "Action order": "x,y,z,qw,qx,qy,qz,gripper" if i == 0 else "",
+            "Task description": "" if i == 0 else "",
+            "Git commit demo_record_utils (branch: add_recovery_button)": "71ea8d24362aea8b6e59408db5c7fd79a6b44e29" if i == 0 else "",
+            "Git commit multipanda_ros2 (branch: dionisis-wip)": "TBD" if i == 0 else "",
         })
 
     # Create DataFrame
@@ -160,21 +160,14 @@ def create_annotation_excel(hdf5_path: str):
         formula1='"Absolute, Relative (wrt last action)"', 
         allow_blank=True
     )
-    dv_act = DataValidation(
-        type="list", 
-        formula1='"positions-rotations-gripper, gripper-positions-rotations"', 
-        allow_blank=True
-    )
 
     # Attach validations to the worksheet
     ws.add_data_validation(dv_rot)
     ws.add_data_validation(dv_pos)
-    ws.add_data_validation(dv_act)
 
     # Apply dropdown menus ONLY to the first data row (Row 2 in Excel)
-    dv_rot.add("H2")  # Column H: Rotations convention
-    dv_pos.add("I2")  # Column I: Positions convention
-    dv_act.add("J2")  # Column J: Action order
+    dv_rot.add("K2")  # Column K: Rotations convention
+    dv_pos.add("L2")  # Column L: Positions convention
 
     # Align cells top and auto-adjust column widths
     for col in ws.columns:
