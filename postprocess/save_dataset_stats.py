@@ -7,9 +7,6 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 from openpyxl.worksheet.datavalidation import DataValidation
 
-# TODO:
-# 1) REBUILD FOR CHANGE IN DOCKERFILE
-
 """
 Requirements: pip install h5py pandas openpyxl
 Usage example: python save_dataset_stats.py --hdf5_path ../datasets/hdf5_converted/dataset_task1.h5
@@ -130,12 +127,12 @@ def create_annotation_excel(hdf5_path: str):
             "Keys / Actions names": key_info,
             "Frequency (Hz)": frequency_val if i == 0 else "",
             "Dataset duration [minutes]": duration_excel_formula if i == 0 else "",
-            "Rotations convention": "Quaternion-WXYZ" if i == 0 else "",
+            "Rotations convention": "Quaternion-XYZW" if i == 0 else "",
             "Positions convention": "Absolute" if i == 0 else "",
-            "Action order": "x,y,z,qw,qx,qy,qz,gripper" if i == 0 else "",
+            "Action order": "x,y,z,qx,qy,qz,qw,gripper" if i == 0 else "",
             "Task description": "" if i == 0 else "",
-            "Git commit demo_record_utils (branch: add_recovery_button)": "71ea8d24362aea8b6e59408db5c7fd79a6b44e29" if i == 0 else "",
-            "Git commit multipanda_ros2 (branch: dionisis-wip)": "TBD" if i == 0 else "",
+            "Git commit demo_record_utils (branch: add_recovery_button)": "TBD" if i == 0 else "",
+            "Git commit multipanda_ros2 (branch: dionisis-wip)": "cef5b0d6e49204aea20ce7dbbe53d3888a9a727c" if i == 0 else "",
         })
 
     # Create DataFrame
