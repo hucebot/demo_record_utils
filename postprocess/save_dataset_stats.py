@@ -131,7 +131,7 @@ def create_annotation_excel(hdf5_path: str):
             "Positions convention": "Absolute" if i == 0 else "",
             "Action order": "x,y,z,qx,qy,qz,qw,gripper" if i == 0 else "",
             "Task description": "" if i == 0 else "",
-            "Git commit demo_record_utils (branch: add_recovery_button)": "37ddf3fd0f219a7e296bed7ae32fb2d59718fb19" if i == 0 else "",
+            "Git commit demo_record_utils (branch: add_recovery_button)": "576fe60376ef3bebed262ff44c2d644f4a21abb5" if i == 0 else "",
             "Git commit multipanda_ros2 (branch: dionisis-wip)": "cef5b0d6e49204aea20ce7dbbe53d3888a9a727c" if i == 0 else "",
         })
 
