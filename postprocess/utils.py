@@ -795,11 +795,16 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
                 topic_times = all_topic_times[topic_name]
                 topic_data = all_topic_data[topic_name]
 
+                # CHECK: Skip eventually empty topics (anormal behaviour)
+                if len(topic_times) == 0:
+                    print(f"{bcolors.WARNING}Warning: Topic {topic_name} is empty in {demo_label}, skipping key creation.{bcolors.ENDC}")
+                    continue
+
                 # Synch data with given topic timestamps (ZOH logic remains intact)
                 synch_topic_data = getLastDataAtRefTimes(reference_topic_times, topic_times, topic_data)
 
                 for full_name in topic_data.keys():
-                    if demo_idx == 0:
+                    if demo_idx == 0 and len(topic_data[full_name]) > 0:
                         infos.append({"hdf5_name": full_name, "ft_example": topic_data[full_name][0]})
 
                     prefix, leaf = full_name.split("/", 1) if "/" in full_name else ("", full_name)
