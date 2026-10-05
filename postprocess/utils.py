@@ -1,21 +1,44 @@
 """
-Utility functions to handle rosbags.
+Utility functions to convert recorded rosbags (one folder per demo) into one HDF5 file per task.
+
+Layout written (read by inria_franka_hdf5_to_lerobot.py and ForceVAM):
+    data/demo_<k>/timestamps                (T, 1) float32, s from the first kept frame
+    data/demo_<k>/actions                   (T, A) float32, the "actions/..." topics concatenated (attr action_parts)
+    data/demo_<k>/obs/<name>                (T, ...) the "observations/..." topics, sampled at the reference frames
+    data/demo_<k>/raw/<field>, <field>_t    every message of each numeric topic at its own rate (e.g. the wrist force
+                                            at 800 Hz, which the frame sampling would alias), times in s on the same clock;
+                                            <field> is the config's hdf5_name (raw/observations/ee_force, ...)
+    attrs: bag_name (the demo's rosbag folder), num_samples, action_time, time_source, ...
+
+How a frame is built (config.yaml, all optional):
+    reference_topic_name   the frames are this topic's messages (a camera)
+    action_time            "next_frame" (default): the action of frame k is the command in effect at frame k+1, i.e.
+                           the command that followed the observation (what a policy must output); the last frame,
+                           which has no next frame, is dropped. "current": the command in effect at frame k (the
+                           previous behaviour: the command the observation was already following).
+    time_source            "receive" (default): the time the recorder received each message (one clock for every
+                           topic); "header": the message's header stamp (the time it was measured; only if every
+                           publisher's clock is the same), falling back to the receive time where the stamp is 0
+    image_size             [width, height] every camera is resized to (default [256, 256])
+    save_raw_streams       true (default): also store the numeric topics at full rate under raw/
+Observations and actions are the last message at or before the frame time (zero-order hold); frames before every
+selected topic has published once are dropped (no frame ever uses a message from its future).
+
+Demos are converted in the order of their folder names (the recorder names them <task>_<YYYYmmdd_HHMMSS>, so in
+recording order) and recognised by bag_name: converting again adds only the new bags, as the next demo_<k>. A demo
+is written under a temporary name and renamed when complete, so an interrupted conversion leaves nothing half-written
+behind. A bag missing a selected topic, or with one that never published, is skipped with an error and listed at the
+end; the others are converted.
 """
 
+import time
+
 import cv2
-from cv_bridge import CvBridge, CvBridgeError
+import h5py
 import numpy as np
-# from rosbags.highlevel import AnyReader
+import yaml
 from rosbags.rosbag2 import Reader
 from rosbags.typesys import Stores, get_typestore, get_types_from_msg
-
-from std_msgs.msg import Header
-
-import h5py
-import time
-from os import walk
-import yaml
-import re
 
 # Your custom message definition
 # check: https://ternaris.gitlab.io/rosbags/examples/register_types.html#from-multiple-files
@@ -23,6 +46,12 @@ GRIPPER_WIDTH_MSG = """
 std_msgs/Header header
 float32 width
 """
+
+IMAGE_TYPES = ("sensor_msgs/msg/CompressedImage", "sensor_msgs/msg/Image")
+NUMERIC_TYPES = ("sensor_msgs/msg/JointState", "geometry_msgs/msg/PoseStamped", "geometry_msgs/msg/WrenchStamped",
+                 "custom_msgs/msg/GripperWidth", "geometry_msgs/msg/PointStamped")
+TMP_PREFIX = "_incomplete_"
+
 
 # colors for printing
 class bcolors:
@@ -36,618 +65,130 @@ class bcolors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-### EXTRACTION UTILS ###
-
-def pad_and_concatenate(arrays, axis=0):
-    """
-    Concatenate along an axis,
-    padding other axis with zeros to get equal sizes.
-
-    Args:
-        arrays (list[np.ndarray])
-        axis (int)
-
-    Returns:
-        result (np.ndarray)
-    """
-    if not arrays:
-        raise ValueError("The list is empty.")
-
-    # Verify the number of axis
-    ndim = arrays[0].ndim
-    if any(a.ndim != ndim for a in arrays):
-        raise ValueError("All arrays must have the same number of axis.")
-
-    # Maximal length for each axis
-    max_shape = np.max([a.shape for a in arrays], axis=0)
-
-    padded_arrays = []
-    for a in arrays:
-        # Compute padding for each axis
-        pad_width = [(0, max_shape[i] - a.shape[i]) if i != axis else (0, 0) for i in range(ndim)]
-        a_padded = np.pad(a, pad_width, mode='constant', constant_values=0)
-        padded_arrays.append(a_padded)
-
-    # Final concatenation
-    return np.concatenate(padded_arrays, axis=axis)
 
 def fixed_compressed_imgmsg_to_cv2(cmprs_img_msg, desired_encoding="passthrough"):
     """
-    Convert a sensor_msgs::CompressedImage message to an OpenCV :cpp:type:`cv::Mat`.
-
-    :param cmprs_img_msg:   A :cpp:type:`sensor_msgs::CompressedImage` message
-    :param desired_encoding:  The encoding of the image data, one of the following strings:
-
-        * ``"passthrough"``
-        * one of the standard strings in sensor_msgs/image_encodings.h
-
-    :rtype: :cpp:type:`cv::Mat`
-    :raises CvBridgeError: when conversion is not possible.
-
-    If desired_encoding is ``"passthrough"``, then the returned image has the same format
-    as img_msg. Otherwise desired_encoding must be one of the standard image encodings
-
-    This function returns an OpenCV :cpp:type:`cv::Mat` message on success,
-    or raises :exc:`cv_bridge.CvBridgeError` on failure.
-
-    If the image only has one channel, the shape has size 2 (width and height)
+    Decode a sensor_msgs/CompressedImage (or its data buffer) to an OpenCV image, keeping 16-bit depth PNGs intact
+    (cv_bridge's own conversion truncates them). "passthrough" returns the decoded image as stored (BGR for color).
     """
-    import cv2
-    import numpy as np
-
-    str_msg = cmprs_img_msg.data
-    buf = np.ndarray(shape=(1, len(str_msg)), dtype=np.uint8, buffer=cmprs_img_msg.data)
+    data = cmprs_img_msg.data if hasattr(cmprs_img_msg, "data") else cmprs_img_msg
+    buf = np.frombuffer(bytes(data), dtype=np.uint8)
     im = cv2.imdecode(buf, cv2.IMREAD_UNCHANGED)
-
     if desired_encoding == "passthrough":
         return im
-
+    from cv_bridge import CvBridgeError
     from cv_bridge.boost.cv_bridge_boost import cvtColor2
-
     try:
-        res = cvtColor2(im, "bgr8", desired_encoding)
+        return cvtColor2(im, "bgr8", desired_encoding)
     except RuntimeError as e:
         raise CvBridgeError(e)
 
-    return res
+
+def raw_image_to_array(msg):
+    """sensor_msgs/Image (as deserialised by rosbags) to an array (H, W[, C]), without cv_bridge."""
+    dtype = {"mono16": np.uint16, "16UC1": np.uint16, "32FC1": np.float32}.get(msg.encoding, np.uint8)
+    channels = {"rgb8": 3, "bgr8": 3, "rgba8": 4, "bgra8": 4}.get(msg.encoding, 1)
+    row = np.frombuffer(bytes(msg.data), dtype=dtype).reshape(msg.height, -1)[:, :msg.width * channels]
+    img = row.reshape(msg.height, msg.width, channels) if channels > 1 else row.reshape(msg.height, msg.width)
+    if msg.encoding in ("bgr8", "bgra8"):
+        img = img[..., [2, 1, 0] + ([3] if channels == 4 else [])]
+    return img
 
 
-def extractImage(bagpath, topic_name, conversion_args, verbose=False):
-    """Extract images from topic of type sensor_msgs/Image as numpy array"""
-    if verbose:
-        print(f"Extracting '{topic_name}' from '{bagpath}'")
-
-    # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS2_HUMBLE)
-    # Create a CvBridge to convert between OpenCV Images and ROS Image messages.
-    bridge = CvBridge()
-
-    # Create reader instance and open for reading.
-    with AnyReader([bagpath], default_typestore=typestore) as reader:
-        connections = [x for x in reader.connections if x.topic == topic_name]
-        times = []
-        images = []
-        for connection, timestamp, rawdata in reader.messages(connections=connections):
-            msg = reader.deserialize(rawdata, connection.msgtype)
-            if msg.encoding == "16UC1":
-                msg.encoding = "mono16"
-            img_array = bridge.imgmsg_to_cv2(msg)  # [height, width, (channels)]
-
-            times.append(int(timestamp * 1e-6))  # milliseconds
-            images.append(img_array)
-
-        image_times = np.array(times)
-        images = np.array(images)
-        # add a dummy dimension
-        image_times = np.expand_dims(image_times, axis=-1)
-        if images.ndim == 3:  # depth images
-            images = np.expand_dims(images, axis=-1)
-
-        if verbose:
-            print("image_times", image_times.shape)
-            print("images", images.shape)
-
-        return image_times, [images]
+def numeric_values(msg, msg_type, args):
+    """The numbers one HDF5 field takes from a numeric message."""
+    if msg_type == "sensor_msgs/msg/JointState":
+        return list(getattr(msg, args.get("physical_quantity", "position")))
+    if msg_type == "geometry_msgs/msg/PoseStamped":  # position, then the quaternion (x, y, z, w)
+        p, q = msg.pose.position, msg.pose.orientation
+        return [p.x, p.y, p.z, q.x, q.y, q.z, q.w]
+    if msg_type == "geometry_msgs/msg/WrenchStamped":
+        quantity = args.get("physical_quantity")
+        if quantity not in ("force", "torque"):
+            raise ValueError(f"WrenchStamped fields need physical_quantity: force or torque (got {quantity})")
+        v = getattr(msg.wrench, quantity)
+        return [v.x, v.y, v.z]
+    if msg_type == "custom_msgs/msg/GripperWidth":
+        return [msg.width]
+    if msg_type == "geometry_msgs/msg/PointStamped":
+        return [msg.point.x]
+    raise NotImplementedError(msg_type)
 
 
-def extractAndEncodeImage(bagpath, topic_name, verbose=False):
-    """Extract images from topic of type sensor_msgs/Image as encoded images (JPEG or PNG)"""
-    if verbose:
-        print(f"Extracting '{topic_name}' from '{bagpath}'")
-
-    # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS2_HUMBLE)
-    # Create a CvBridge to convert between OpenCV Images and ROS Image messages.
-    bridge = CvBridge()
-
-    # Create reader instance and open for reading.
-    with AnyReader([bagpath], default_typestore=typestore) as reader:
-        connections = [x for x in reader.connections if x.topic == topic_name]
-        times = []
-        images = []
-        max_length = 0
-        for connection, timestamp, rawdata in reader.messages(connections=connections):
-            times.append(int(timestamp * 1e-6))  # milliseconds
-            msg = reader.deserialize(rawdata, connection.msgtype)
-            if msg.encoding == "16UC1":
-                msg.encoding = "mono16"
-            img_array = bridge.imgmsg_to_cv2(msg)  # [height, width, (channels)]
-
-            if img_array.ndim == 3:  # color -> JPEG
-                success, encoded_image = cv2.imencode(".jpg", img_array)
-            elif img_array.ndim == 2:  # depth -> PNG
-                success, encoded_image = cv2.imencode(".png", img_array)
-            if not success:
-                raise Exception("Image encoding failed!")
-
-            images.append(encoded_image)
-            if len(encoded_image) > max_length:
-                max_length = len(encoded_image)
-
-        # pad encoded images with 0 to have uniform length
-        padded_images = []
-        for img in images:
-            padded_images.append(
-                np.append(img, np.zeros((max_length - len(img),), dtype=img.dtype))
-            )
-
-        image_times = np.array(times)
-        padded_images = np.array(padded_images)
-
-        # add a dummy dimension
-        image_times = np.expand_dims(image_times, axis=-1)
-
-        if verbose:
-            print("image_times", image_times.shape)
-            print("padded_images", padded_images.shape)
-
-        return image_times, padded_images
+def message_time(msg, receive_ns, time_source):
+    """ms, from the header stamp ("header", where set) or the recorder's receive time."""
+    if time_source == "header" and hasattr(msg, "header"):
+        stamp = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+        if stamp > 0:
+            return stamp * 1e-6
+    return receive_ns * 1e-6
 
 
-def extractCompressedImage(bagpath, topic_name, conversion_args, verbose=False):
-    """Extract images from topic of type sensor_msgs/CompressedImage as numpy array (T,H,W,C).
-
-    Keeps original H,W from the topic (no resize). Returns RGB for color images.
+def extract_all_topics_single_pass(bagpaths, selected_topics, topic_types, time_source="receive",
+                                   image_size=(256, 256), verbose=False):
+    """
+    Every message of the selected topics, in one pass over the bag files. Returns per topic: times (n,) in ms
+    (float64), and per HDF5 field its values (n, ...); images decoded to RGB and resized to image_size (width, height).
+    Also per topic the median header-minus-receive delay in ms (where the messages have a header), for the record.
     """
     if verbose:
-        print(f"Extracting '{topic_name}' from '{bagpath}'")
-
-    # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS2_HUMBLE)
-
-    # Create reader instance and open for reading.
-    with AnyReader([bagpath], default_typestore=typestore) as reader:
-        connections = [x for x in reader.connections if x.topic == topic_name]
-        times = []
-        images = []
-        for connection, timestamp, rawdata in reader.messages(connections=connections):
-            msg = reader.deserialize(rawdata, connection.msgtype)
-            img_array = fixed_compressed_imgmsg_to_cv2(msg)  # OpenCV BGR
-            if img_array.ndim == 3 and img_array.shape[-1] == 3:
-                img_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
-            times.append(int(timestamp * 1e-6))  # milliseconds
-            images.append(img_array)
-
-        image_times = np.array(times)
-        images = np.array(images)
-
-        # Add a dummy dimension for timestamps, and ensure images have a channel axis.
-        image_times = np.expand_dims(image_times, axis=-1)
-        if images.ndim == 3:  # grayscale images: (T, H, W) -> (T, H, W, 1)
-            images = np.expand_dims(images, axis=-1)
-
-        if verbose:
-            print("image_times", image_times.shape)
-            print("images", images.shape)
-
-        return image_times, [images]
-
-
-def extractAndDecodeCompressedImage(bagpath, topic_name, conversion_args, verbose=False):
-    """Extract images from topic of type sensor_msgs/CompressedImage as numpy array"""
-    if verbose:
-        print(f"Extracting '{topic_name}' from '{bagpath}'")
-
-    # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS2_HUMBLE)
-
-    # Create reader instance and open for reading.
-    with AnyReader([bagpath], default_typestore=typestore) as reader:
-        connections = [x for x in reader.connections if x.topic == topic_name]
-        times = []
-        images = []
-        for connection, timestamp, rawdata in reader.messages(connections=connections):
-            msg = reader.deserialize(rawdata, connection.msgtype)
-            img_array = fixed_compressed_imgmsg_to_cv2(msg)  # [height, width, channels]
-
-            times.append(int(timestamp * 1e-6))  # milliseconds
-            images.append(img_array)
-
-        image_times = np.array(times)
-        images = np.array(images)
-        # add a dummy dimension
-        image_times = np.expand_dims(image_times, axis=-1)
-        if images.ndim == 3:  # depth images
-            images = np.expand_dims(images, axis=-1)
-
-        if verbose:
-            print("image_times", image_times.shape)
-            print("images", images.shape)
-
-        return image_times, [images]
-
-
-def extractPoseStamped(bagpath, topic_name, conversion_args, verbose=False):
-    """Extract 3D poses from topic of type geometry_msgs/PoseStamped as numpy array"""
-    if verbose:
-        print(f"Extracting '{topic_name}' from '{bagpath}'")
-
-    # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS2_HUMBLE)
-
-    # Create reader instance and open for reading.
-    with AnyReader([bagpath], default_typestore=typestore) as reader:
-        connections = [x for x in reader.connections if x.topic == topic_name]
-
-        times = []
-        poses = []
-        for connection, timestamp, rawdata in reader.messages(connections=connections):
-            msg = reader.deserialize(rawdata, connection.msgtype)
-
-            times.append(int(timestamp * 1e-6))
-            poses.append(
-                np.array(
-                    [
-                        msg.pose.position.x,
-                        msg.pose.position.y,
-                        msg.pose.position.z,
-                        msg.pose.orientation.x,
-                        msg.pose.orientation.y,
-                        msg.pose.orientation.z,
-                        msg.pose.orientation.w,
-                    ]
-                )
-            )
-
-        pose_times = np.array(times)
-        pose_array = np.array(poses, dtype="float32")
-        # add a dummy dimension
-        pose_times = np.expand_dims(pose_times, axis=-1)
-
-        if verbose:
-            print("pose_times", pose_times.shape)
-            print("pose_array", pose_array.shape)
-
-        return pose_times, [pose_array]
-
-
-def extractTwist(bagpath, topic_name, conversion_args, verbose=False):
-    """Extract twist from topic of type geometry_msgs/Twist as numpy array"""
-    if verbose:
-        print(f"Extracting '{topic_name}' from '{bagpath}'")
-
-    # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS2_HUMBLE)
-
-    # Create reader instance and open for reading.
-    with AnyReader([bagpath], default_typestore=typestore) as reader:
-        connections = [x for x in reader.connections if x.topic == topic_name]
-
-        times = []
-        twists = []
-        for connection, timestamp, rawdata in reader.messages(connections=connections):
-            msg = reader.deserialize(rawdata, connection.msgtype)
-
-            times.append(int(timestamp * 1e-6))
-            twists.append(
-                np.array(
-                    [
-                        msg.linear.x,
-                        msg.linear.y,
-                        msg.linear.z,
-                        msg.angular.x,
-                        msg.angular.y,
-                        msg.angular.z,
-                    ]
-                )
-            )
-
-        twist_times = np.array(times)
-        twist_array = np.array(twists, dtype="float32")
-        # add a dummy dimension
-        twist_times = np.expand_dims(twist_times, axis=-1)
-
-        if verbose:
-            print("twist_times", twist_times.shape)
-            print("twist_array", twist_array.shape)
-
-        return twist_times, twist_array
-
-
-def extractGripperFromPointStamped(bagpath, topic_name, conversion_args, verbose=False):
-    """Extract gripper command from topic of type geometry_msgs/PointStamped as numpy array"""
-    if verbose:
-        print(f"Extracting '{topic_name}' from '{bagpath}'")
-
-    # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS2_HUMBLE)
-
-    # Create reader instance and open for reading.
-    with AnyReader([bagpath], default_typestore=typestore) as reader:
-        connections = [x for x in reader.connections if x.topic == topic_name]
-
-        times = []
-        data = []
-        for connection, timestamp, rawdata in reader.messages(connections=connections):
-            msg = reader.deserialize(rawdata, connection.msgtype)
-
-            times.append(int(timestamp * 1e-6))
-            data.append(msg.point.x)
-
-        gripper_times = np.array(times)
-        gripper_array = np.array(data, dtype="float32")
-        # add a dummy dimension
-        gripper_array = np.expand_dims(gripper_array, axis=-1)
-        gripper_times = np.expand_dims(gripper_times, axis=-1)
-
-        if verbose:
-            print("gripper_times", gripper_times.shape)
-            print("gripper_array", gripper_array.shape)
-
-        return gripper_times, [gripper_array]
-
-def extractGripperWidth(bagpath, topic_name, conversion_args, verbose=False):
-    """Extract gripper width from topic of type custom_msgs/msg/GripperWidth as numpy array"""
-    if verbose:
-        print(f"Extracting gripper width '{topic_name}' from '{bagpath}'")
-
-    # Create a type store to use if the bag has no message definitions.
+        print(f"Extracting {len(selected_topics)} topics from {len(bagpaths)} bag file(s)")
     typestore = get_typestore(Stores.ROS2_HUMBLE)
     typestore.register(get_types_from_msg(GRIPPER_WIDTH_MSG, 'custom_msgs/msg/GripperWidth'))
+    for topic in selected_topics:
+        if topic_types[topic] not in IMAGE_TYPES + NUMERIC_TYPES:
+            raise NotImplementedError(f"{topic}: message type {topic_types[topic]} is not handled")
 
-
-    # Create reader instance and open for reading.
-    with AnyReader([bagpath], default_typestore=typestore) as reader:
-        connections = [x for x in reader.connections if x.topic == topic_name]
-
-        if not connections:
-            if verbose:
-                print(f"Topic '{topic_name}' not found. Returning zeros.")
-            return None, [None]
-
-        times = []
-        data = []
-        for connection, timestamp, rawdata in reader.messages(connections=connections):
-            msg = reader.deserialize(rawdata, connection.msgtype)
-
-            times.append(int(timestamp * 1e-6))
-            data.append(msg.width)
-
-        gripper_times = np.array(times)
-        gripper_array = np.array(data, dtype="float32")
-        # add a dummy dimension
-        gripper_array = np.expand_dims(gripper_array, axis=-1)
-        gripper_times = np.expand_dims(gripper_times, axis=-1)
-
-        if verbose:
-            print("gripper_times", gripper_times.shape)
-            print("gripper_array", gripper_array.shape)
-
-        return gripper_times, [gripper_array]
-
-
-def extractJointState(bagpath, topic_name, conversion_args, verbose=False):
-    """Extract color images from topic of type sensor_msgs/JointState as numpy array"""
-    if verbose:
-        print(f"Extracting '{topic_name}' from '{bagpath}'")
-
-    # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS2_HUMBLE)
-
-    # Create reader instance and open for reading.
-    with AnyReader([bagpath], default_typestore=typestore) as reader:
-        connections = [x for x in reader.connections if x.topic == topic_name]
-        times = []
-        data = [[] for _ in conversion_args]
-
-        for connection, timestamp, rawdata in reader.messages(connections=connections):
-            msg = reader.deserialize(rawdata, connection.msgtype)
-
-            #print()
-
-            times.append(int(timestamp * 1e-6))  # milliseconds
-
-            for i, arg in enumerate(conversion_args):
-                if not arg:
-                    data[i].append(msg.position)
-                elif arg["physical_quantity"] == "position":
-                    data[i].append(msg.position)
-                elif arg["physical_quantity"] == "velocity":
-                    data[i].append(msg.velocity)
-                elif arg["physical_quantity"] == "effort":
-                    data[i].append(msg.effort)
-                else:
-                    raise NotImplementedError
-
-
-        joint_times = np.array(times)
-        joint_data = [np.array(data[i], dtype="float32") for i in range(len(data))]
-
-        # add a dummy dimension
-        joint_times = np.expand_dims(joint_times, axis=-1)
-
-        if verbose:
-            print("joint_times", joint_times.shape)
-            print("joint_data", [joint_data[i].shape for i in range(len(joint_data))])
-
-        return joint_times, joint_data
-
-def extractWrenchStamped(bagpath, topic_name, conversion_args, verbose=False):
-    """Extract color images from topic of type sensor_msgs/JointState as numpy array"""
-    if verbose:
-        print(f"Extracting '{topic_name}' from '{bagpath}'")
-
-    # Create a type store to use if the bag has no message definitions.
-    typestore = get_typestore(Stores.ROS2_HUMBLE)
-
-    # Create reader instance and open for reading.
-    with AnyReader([bagpath], default_typestore=typestore) as reader:
-        connections = [x for x in reader.connections if x.topic == topic_name]
-        times = []
-        data = [[] for _ in conversion_args]
-
-        for connection, timestamp, rawdata in reader.messages(connections=connections):
-            msg = reader.deserialize(rawdata, connection.msgtype)
-
-            #print()
-
-            times.append(int(timestamp * 1e-6))  # milliseconds
-
-            for i, arg in enumerate(conversion_args):
-                if not arg:
-                    data[i].append([msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z])
-                elif arg["physical_quantity"] == "force":
-                    data[i].append([msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z])
-                elif arg["physical_quantity"] == "torque":
-                    data[i].append([msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z])
-                else:
-                    raise NotImplementedError
-
-        joint_times = np.array(times)
-        joint_data = [np.array(data[i], dtype="float32") for i in range(len(data))]
-
-        # add a dummy dimension
-        joint_times = np.expand_dims(joint_times, axis=-1)
-
-        if verbose:
-            print("joint_times", joint_times.shape)
-            print("joint_data", [joint_data[i].shape for i in range(len(joint_data))])
-
-        return joint_times, joint_data
-
-def save_mp4_from_imgs(output_file, fps, imgs, color=True):
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # Codec for MP4 files
-
-    # Get video dimensions from the first image
-    images = imgs
-    num_imgs, height, width, _ = imgs.shape
-
-    # Create VideoWriter
-    if color:
-        out = cv2.VideoWriter(output_file, fourcc, fps, (width, height))
-    else:
-        out = cv2.VideoWriter(output_file, fourcc, fps, (width, height), 0)
-    # Write each frame to the video
-    for i in range(num_imgs):
-        out.write(images[i, :])
-
-    # Release resources
-    out.release()
-
-
-def getLastDataAtRefTimes(reference_times, data_times, data_dict):
-    indices = []
-    idx = 0
-    for ref_time in reference_times:
-        while idx < len(data_times) - 1 and data_times[idx + 1] <= ref_time:
-            idx += 1
-        indices.append(idx)
-
-    last_data_dict = {}
-    for key in data_dict.keys():
-        last_data_dict[key] = data_dict[key][indices]
-
-    return last_data_dict
-
-from rosbags.rosbag2 import Reader
-
-def extract_all_topics_single_pass(bagpaths, selected_topics, topic_types, verbose=False):
-    """Opens the bag files sequentially using Reader for maximum performance."""
-    if verbose:
-        print(f"Starting optimized single-pass extraction for {len(bagpaths)} bags...")
-
-    typestore = get_typestore(Stores.ROS2_HUMBLE)
-    typestore.register(get_types_from_msg(GRIPPER_WIDTH_MSG, 'custom_msgs/msg/GripperWidth'))
-    bridge = CvBridge()
-
-    # Pre-allocate
-    extracted_data = {t: {"times": [], "results": {h: [] for h in m.keys()}}
-                      for t, m in selected_topics.items()}
-
-    # OPEN EACH BAG INDIVIDUALLY
+    times = {t: [] for t in selected_topics}
+    delays = {t: [] for t in selected_topics}
+    values = {t: {h: [] for h in m} for t, m in selected_topics.items()}
     for bagpath in bagpaths:
         with Reader(bagpath) as reader:
-            # Filter connections
-            connections = [x for x in reader.connections if x.topic in selected_topics.keys()]
-
+            connections = [x for x in reader.connections if x.topic in selected_topics]
             for connection, timestamp, rawdata in reader.messages(connections=connections):
                 topic = connection.topic
-                # FAST DESERIALIZATION
                 msg = typestore.deserialize_cdr(rawdata, connection.msgtype)
-
-                extracted_data[topic]["times"].append(int(timestamp * 1e-6))
-
-                hdf5_mappings = selected_topics[topic]
+                t = message_time(msg, timestamp, time_source)
+                times[topic].append(t)
+                if hasattr(msg, "header") and msg.header.stamp.sec > 0:
+                    delays[topic].append(timestamp * 1e-6 - (msg.header.stamp.sec * 1e3 + msg.header.stamp.nanosec * 1e-6))
                 msg_type = topic_types[topic]
+                for hdf_name, args in selected_topics[topic].items():
+                    if msg_type == "sensor_msgs/msg/CompressedImage":
+                        values[topic][hdf_name].append(np.asarray(msg.data).copy())  # decoded below, in one batch
+                    elif msg_type == "sensor_msgs/msg/Image":
+                        values[topic][hdf_name].append(raw_image_to_array(msg))
+                    else:
+                        values[topic][hdf_name].append(numeric_values(msg, msg_type, args))
 
-                # ROUTE (Images stored RAW for batch processing later)
-                if msg_type in ["sensor_msgs/msg/CompressedImage", "sensor_msgs/msg/Image"]:
-                    for hdf_name in hdf5_mappings.keys():
-                        # Extract the data NOW, not later
-                        if msg_type == "sensor_msgs/msg/CompressedImage":
-                            # Store the raw bytes, not the whole message
-                            extracted_data[topic]["results"][hdf_name].append(msg.data)
-                        else:
-                            # If raw Image, decode to bytes or array immediately
-                            extracted_data[topic]["results"][hdf_name].append(bridge.imgmsg_to_cv2(msg))
-
-                # ROUTE (Numeric data saved immediately)
-                elif msg_type == "sensor_msgs/msg/JointState":
-                    for hdf_name, args in hdf5_mappings.items():
-                        qty = args.get("physical_quantity", "position")
-                        val = getattr(msg, qty if qty != "position" else "position")
-                        extracted_data[topic]["results"][hdf_name].append(val)
-                elif msg_type == "geometry_msgs/msg/PoseStamped":
-                    pose_arr = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z,
-                                msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w]
-                    for hdf_name in hdf5_mappings.keys():
-                        extracted_data[topic]["results"][hdf_name].append(pose_arr)
-                elif msg_type == "geometry_msgs/msg/WrenchStamped":
-                    for hdf_name, args in hdf5_mappings.items():
-                        qty = args.get("physical_quantity", "torque")
-                        val = [msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z] if qty == "force" else \
-                              [msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z]
-                        extracted_data[topic]["results"][hdf_name].append(val)
-                elif msg_type == "custom_msgs/msg/GripperWidth":
-                    for hdf_name in hdf5_mappings.keys():
-                        extracted_data[topic]["results"][hdf_name].append(msg.width)
-                elif msg_type == "geometry_msgs/msg/PointStamped":
-                    for hdf_name in hdf5_mappings.keys():
-                        extracted_data[topic]["results"][hdf_name].append(msg.point.x)
-
-    # BATCH PROCESS & FORMAT
-    topic_times = {}
-    final_data = {}
-    for topic, data_dict in extracted_data.items():
-        topic_times[topic] = np.expand_dims(np.array(data_dict["times"]), axis=-1)
+    topic_times, final_data, median_delay = {}, {}, {}
+    for topic in selected_topics:
+        t = np.asarray(times[topic], dtype=np.float64)
+        order = np.argsort(t, kind="stable")  # several bag files, or header stamps: keep time order
+        topic_times[topic] = t[order]
+        median_delay[topic] = float(np.median(delays[topic])) if delays[topic] else float("nan")
         final_data[topic] = {}
-        msg_type = topic_types[topic]
-
-        for hdf_name, res_list in data_dict["results"].items():
-            if msg_type in ["sensor_msgs/msg/CompressedImage", "sensor_msgs/msg/Image"]:
+        for hdf_name, items in values[topic].items():
+            items = [items[i] for i in order]
+            if topic_types[topic] in IMAGE_TYPES:
                 processed = []
-                for msg in res_list:
-                    img = fixed_compressed_imgmsg_to_cv2(msg) if msg_type == "sensor_msgs/msg/CompressedImage" else bridge.imgmsg_to_cv2(msg)
-                    if img.ndim == 3 and img.shape[-1] == 3: img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    # RESIZE HERE (One-pass batch)
-                    processed.append(cv2.resize(img, (256, 256), interpolation=cv2.INTER_AREA))
+                for item in items:
+                    img = fixed_compressed_imgmsg_to_cv2(item) if topic_types[topic] == IMAGE_TYPES[0] else item
+                    if topic_types[topic] == IMAGE_TYPES[0] and img.ndim == 3 and img.shape[-1] == 3:
+                        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    processed.append(cv2.resize(img, tuple(image_size), interpolation=cv2.INTER_AREA))
                 arr = np.array(processed)
-                final_data[topic][hdf_name] = np.expand_dims(arr, axis=-1) if arr.ndim == 3 else arr
+                final_data[topic][hdf_name] = arr[..., None] if arr.ndim == 3 else arr
             else:
-                arr = np.array(res_list, dtype="float32")
-                final_data[topic][hdf_name] = np.expand_dims(arr, axis=-1) if arr.ndim == 1 else arr
+                arr = np.array(items, dtype=np.float32)
+                final_data[topic][hdf_name] = arr[:, None] if arr.ndim == 1 else arr
+    return topic_times, final_data, median_delay
 
-    return topic_times, final_data
+
+def last_index_at(data_times, query_times):
+    """Per query time, the index of the last message at or before it (-1: none yet)."""
+    return np.searchsorted(data_times, query_times, side="right") - 1
+
 
 ### CREATION UTILS ###
 def add_config(fps_used, infos, dir, default=False):
@@ -714,138 +255,168 @@ def add_config(fps_used, infos, dir, default=False):
         with open(dir, "w") as f:
             yaml.dump(list_doc, f, default_flow_style=False)
 
-def create_task(dataset_path, desired_path, task, reference_topic_name, selected_topics, verbose=False):
 
+def read_bag_folder(folder):
+    """The bag files (in split order) and the topic types / message counts of one demo folder."""
+    bagpaths, topic_types, counts = [], {}, {}
+    for file in folder.iterdir():
+        if file.suffix in (".db3", ".mcap"):
+            bagpaths.append(file.resolve())
+        elif file.name in ("metadata.yaml", "metadata.yml"):
+            with open(file, "r") as metadata_file:
+                metadata = yaml.safe_load(metadata_file)
+            for topic_info in metadata["rosbag2_bagfile_information"]["topics_with_message_count"]:
+                name = topic_info["topic_metadata"]["name"]
+                topic_types[name] = topic_info["topic_metadata"]["type"]
+                counts[name] = topic_info["message_count"]
+    bagpaths = sorted(bagpaths, key=lambda p: int(p.stem.split('_')[-1]) if p.stem.split('_')[-1].isdigit() else 0)
+    return bagpaths, topic_types, counts
+
+
+def build_demo(bagpaths, topic_types, selected_topics, reference_topic_name, action_time="next_frame",
+               time_source="receive", image_size=(256, 256), verbose=False):
+    """
+    One demo's frames: returns (timestamps (T, 1) s, obs {name: (T, ...)}, actions (T, A), action_part_names,
+    raw {name: (times (n,) s, values (n, ...))}, info dict). See the module docstring for the rules.
+    """
+    if action_time not in ("next_frame", "current"):
+        raise ValueError(f"action_time must be next_frame or current, got {action_time}")
+    topic_times, topic_data, median_delay = extract_all_topics_single_pass(
+        bagpaths, selected_topics, topic_types, time_source=time_source, image_size=image_size, verbose=verbose)
+
+    ref = topic_times[reference_topic_name]
+    ref = ref[np.concatenate([[True], np.diff(ref) > 0])]  # one frame per distinct time
+    start = max(t[0] for t in topic_times.values())        # every topic has published by then
+    frames = ref[ref >= start]
+    if action_time == "next_frame":
+        obs_times, act_times = frames[:-1], frames[1:]
+    else:
+        obs_times, act_times = frames, frames
+    if len(obs_times) < 2:
+        raise ValueError(f"fewer than 2 frames once every topic has published (from {start - ref[0]:.0f} ms)")
+
+    obs, action_parts, action_part_names, raw = {}, [], [], {}
+    t0 = obs_times[0]
+    for topic, fields in topic_data.items():
+        times = topic_times[topic]
+        for full_name, arr in fields.items():
+            prefix, leaf = full_name.split("/", 1) if "/" in full_name else ("", full_name)
+            at = act_times if prefix == "actions" else obs_times
+            idx = last_index_at(times, at)
+            assert (idx >= 0).all()  # guaranteed by start
+            sampled = arr[idx]
+            if prefix == "actions":
+                action_parts.append(sampled.astype(np.float32, copy=False))
+                action_part_names.append(leaf)
+            else:
+                obs[leaf] = sampled
+            if topic_types[topic] in NUMERIC_TYPES:
+                raw[full_name] = ((times - t0) * 1e-3, arr)
+    actions = (np.concatenate(action_parts, axis=1) if action_parts
+               else np.zeros((len(obs_times), 0), dtype=np.float32))
+    timestamps = ((obs_times - t0) * 1e-3).astype(np.float32)[:, None]
+    dt = np.diff(timestamps[:, 0])
+    info = dict(fps_mean=float(np.mean(1.0 / dt)), fps_std=float(np.std(1.0 / dt)),
+                dropped_start_s=float((start - ref[0]) * 1e-3) if start > ref[0] else 0.0,
+                median_delay_ms={t: d for t, d in median_delay.items()},
+                examples={full_name: arr[0] for fields in topic_data.values() for full_name, arr in fields.items()})
+    return timestamps, obs, actions, action_part_names, raw, info
+
+
+def converted_bags(data_root):
+    """{bag_name: demo label} of the demos already in the file; removes half-written ones."""
+    done = {}
+    for label in list(data_root.keys()):
+        if label.startswith(TMP_PREFIX):
+            print(f"{bcolors.WARNING}Removing the half-written {label} (an interrupted conversion){bcolors.ENDC}")
+            del data_root[label]
+        elif "bag_name" in data_root[label].attrs:
+            done[str(data_root[label].attrs["bag_name"])] = label
+    return done
+
+
+def create_task(dataset_path, desired_path, task, reference_topic_name, selected_topics, verbose=False,
+                action_time="next_frame", time_source="receive", image_size=(256, 256), save_raw_streams=True):
     print(f"Processing task {task}")
-    ep_names = next(walk(dataset_path / task))[1]
-    num_bags = len(ep_names)
-    infos = []
-    fps_tot_mean = 0
+    bag_folders = sorted(p for p in (dataset_path / task).iterdir() if p.is_dir())
+    infos, fps_means, skipped = [], [], []
 
     with h5py.File(f"{desired_path / task}.h5", "a") as h5file:
         data_root = h5file.require_group("data")
-        for demo_idx, demo_folder in enumerate(ep_names):
-            print(f"Processing demo {demo_idx + 1}/{num_bags}")
-            demo_label = f"demo_{demo_idx}"
-            if demo_label in data_root: continue
-            demo_start_time = time.time()
+        done = converted_bags(data_root)
+        legacy = [k for k in data_root.keys() if "bag_name" not in data_root[k].attrs]
+        if legacy:
+            raise RuntimeError(f"{desired_path / task}.h5 has demos from the previous converter (no bag_name: "
+                               f"{legacy[:3]}...): their order is unknown, so new bags cannot be added to it. "
+                               f"Convert into a new file.")
+        next_index = len(done)
+        for n, folder in enumerate(bag_folders):
+            print(f"Processing bag {n + 1}/{len(bag_folders)}: {folder.name}")
+            if folder.name in done:
+                print(f"     already converted as {done[folder.name]}")
+                continue
+            start_time = time.time()
+            bagpaths, topic_types, counts = read_bag_folder(folder)
+            # optional topics (optional: true in the config) the bag lacks are left out of this demo only
+            absent = [t for t in selected_topics if t not in topic_types or counts.get(t, 1) == 0]
+            optional = [t for t in absent if all(a.get("optional") for a in selected_topics[t].values())]
+            if optional:
+                print(f"{bcolors.WARNING}     optional topics absent, left out: {optional}{bcolors.ENDC}")
+            topics = {t: {h: {k: v for k, v in a.items() if k != "optional"} for h, a in m.items()}
+                      for t, m in selected_topics.items() if t not in optional}
+            missing = [t for t in topics if t not in topic_types]
+            empty = [t for t in topics if t in counts and counts[t] == 0]
+            if not bagpaths or missing or empty:
+                why = ("no bag file" if not bagpaths else
+                       f"topics missing: {missing}" if missing else f"topics that never published: {empty}")
+                print(f"{bcolors.FAIL}Error: skipping {folder.name}: {why}{bcolors.ENDC}")
+                skipped.append((folder.name, why))
+                continue
+            if reference_topic_name not in topics:
+                raise ValueError(f"the reference topic {reference_topic_name} must be one of the selected topics")
+            try:
+                timestamps, obs, actions, action_part_names, raw, info = build_demo(
+                    bagpaths, topic_types, topics, reference_topic_name, action_time=action_time,
+                    time_source=time_source, image_size=image_size, verbose=verbose)
+            except ValueError as e:
+                print(f"{bcolors.FAIL}Error: skipping {folder.name}: {e}{bcolors.ENDC}")
+                skipped.append((folder.name, str(e)))
+                continue
+            print(f"     fps estimated: {info['fps_mean']:.2f} +/- {info['fps_std']:.2f}, "
+                  f"{timestamps.shape[0]} frames, first {info['dropped_start_s']:.2f} s dropped (topics starting)")
+            fps_means.append(info["fps_mean"])
+            if not infos:
+                infos = [{"hdf5_name": k, "ft_example": v} for k, v in info["examples"].items()]
 
-            # Read metadata (Same as before)
-            bagpaths, topic_types = [], {}
-            for file in (dataset_path / task / demo_folder).iterdir():
-                if str(file)[-4:] == ".db3":
-                    bagpaths.append(file.resolve())
-                elif str(file).endswith("metadata.yaml") or str(file).endswith("metadata.yml"):
-                    with open(file, "r") as metadata_file:
-                        metadata = yaml.safe_load(metadata_file)
-                        for topic_info in metadata["rosbag2_bagfile_information"]["topics_with_message_count"]:
-                            topic_types[topic_info["topic_metadata"]["name"]] = topic_info["topic_metadata"]["type"]
-                        for topic_name in selected_topics.keys():
-                            if topic_name not in topic_types.keys():
-                                print(f"{bcolors.FAIL}Error: Topic {topic_name} missing!{bcolors.ENDC}")
-                                return infos, fps_tot_mean
-
-            bagpaths = sorted(bagpaths, key=lambda p: int(p.stem.split('_')[-1]))
-
-            # --- THE SPEED UP: EXTRACT EVERYTHING ONCE ---
-            all_topic_times, all_topic_data = extract_all_topics_single_pass(
-                bagpaths, selected_topics, topic_types, verbose=verbose
-            )
-
-            # Handle Reference Topic
-            if reference_topic_name not in all_topic_times:
-                print(f"{bcolors.WARNING}Warning: Ref topic not found. Using last available.{bcolors.ENDC}")
-                reference_topic_name = list(all_topic_times.keys())[-1]
-
-            reference_topic_times = all_topic_times[reference_topic_name]
-
-            # Create mask to remove duplicates
-            valid_mask = np.pad(np.diff(reference_topic_times[:,0]), (0,1), mode='constant', constant_values=1) > 0
-            timestamps = reference_topic_times[valid_mask] - reference_topic_times[valid_mask][0]
-            timestamps = (timestamps * 1e-3).astype("float32")
-
-            fps_mean = np.mean(1/np.diff(timestamps[:,0])).item()
-            fps_std = np.std(1/np.diff(timestamps[:,0])).item()
-            print(f"fps estimated: {fps_mean:.2f} +/- {fps_std:.2f}")
-            fps_tot_mean = (fps_tot_mean*demo_idx+fps_mean)/(demo_idx+1)
-
-
-            ep_grp = data_root.create_group(demo_label, track_order=True)
-            ep_grp.create_dataset("timestamps", data=timestamps)
-
-            obs_dict = {}
-            action_parts = []
-            action_part_names = []
-
-            # --- PROCESS THE ALREADY EXTRACTED DATA ---
-            for topic_name in selected_topics.keys():
-                topic_times = all_topic_times[topic_name]
-                topic_data = all_topic_data[topic_name]
-
-                # Synch data with given topic timestamps (ZOH logic remains intact)
-                synch_topic_data = getLastDataAtRefTimes(reference_topic_times, topic_times, topic_data)
-
-                for full_name in topic_data.keys():
-                    if demo_idx == 0:
-                        infos.append({"hdf5_name": full_name, "ft_example": topic_data[full_name][0]})
-
-                    prefix, leaf = full_name.split("/", 1) if "/" in full_name else ("", full_name)
-                    arr = synch_topic_data[full_name]
-
-                    if prefix == "observations":
-                        obs_dict[leaf] = arr
-                    elif prefix == "actions":
-                        action_parts.append(arr)
-                        action_part_names.append(leaf)
-                    else:
-                        obs_dict[full_name] = arr
-
-            # Remove duplicates and save logic (Same as before)
-            for k in obs_dict.keys():
-                if obs_dict[k].shape[0] == len(valid_mask):
-                    obs_dict[k] = obs_dict[k][valid_mask]
-
-            for i in range(len(action_parts)):
-                if action_parts[i].shape[0] == len(valid_mask):
-                    action_parts[i] = action_parts[i][valid_mask]
-
-            ep_grp.attrs["num_samples"] = int(timestamps.shape[0])
-            if len(action_part_names) > 0:
-                ep_grp.attrs["action_parts"] = ",".join(action_part_names)
-
-            if len(action_parts) == 0:
-                actions = np.zeros((timestamps.shape[0], 0), dtype=np.float32)
-            else:
-                actions_cast = [np.asarray(a).astype(np.float32, copy=False) for a in action_parts]
-                actions = np.concatenate(actions_cast, axis=1)
-            ep_grp.create_dataset("actions", data=actions)
-
-            obs_grp = ep_grp.create_group("obs")
-            for k, v in obs_dict.items():
+            label = f"demo_{next_index}"
+            tmp = data_root.create_group(TMP_PREFIX + label, track_order=True)
+            tmp.create_dataset("timestamps", data=timestamps)
+            tmp.create_dataset("actions", data=actions)
+            obs_grp = tmp.create_group("obs")
+            for k, v in obs.items():
                 v = np.asarray(v)
-                if v.shape[0] != timestamps.shape[0]:
-                    continue
-                obs_arr = v.astype(np.uint8, copy=False) if "image" in k or "cam" in k else v.astype(np.float32, copy=False)
-                obs_grp.create_dataset(k, data=obs_arr)
+                obs_grp.create_dataset(k, data=v.astype(np.uint8, copy=False) if v.dtype == np.uint8
+                                       else v.astype(np.float32, copy=False))
+            if save_raw_streams:
+                raw_grp = tmp.create_group("raw")
+                for k, (t, v) in raw.items():
+                    raw_grp.create_dataset(k, data=v.astype(np.float32, copy=False))
+                    raw_grp.create_dataset(k + "_t", data=t.astype(np.float64))
+            tmp.attrs["bag_name"] = folder.name
+            tmp.attrs["num_samples"] = int(timestamps.shape[0])
+            tmp.attrs["action_time"] = action_time
+            tmp.attrs["time_source"] = time_source
+            tmp.attrs["dropped_start_s"] = info["dropped_start_s"]
+            tmp.attrs["median_header_delay_ms"] = yaml.safe_dump(info["median_delay_ms"])
+            if action_part_names:
+                tmp.attrs["action_parts"] = ",".join(action_part_names)
+            h5file.move(tmp.name, f"data/{label}")  # complete: give it its name
+            next_index += 1
+            print(f"     data saved as demo '{label}' in '{desired_path / task}.h5' "
+                  f"({time.time() - start_time:.2f} s)")
 
-            print(f"     data saved as demo '{demo_label}' in '{desired_path / task}.h5'")
-            print(f"     time: {(time.time() - demo_start_time):.2f} seconds")
-
-    return infos, fps_tot_mean
-
-### UNIT TESTS ###
-if __name__ == "__main__":
-    """Test fixed_compressed_imgmsg_to_cv2"""
-    # create a 16bit depth image
-    im0 = np.empty(shape=(100, 100), dtype=np.uint16)
-    im0[:] = 2500  # 2.5m
-    print("original:", np.max(im0), im0.dtype)
-    # convert to compressed message
-    msg = CvBridge().cv2_to_compressed_imgmsg(im0, dst_format="png")
-    # convert back to numpy array
-    im1 = fixed_compressed_imgmsg_to_cv2(msg)
-    print("fixed converted:", np.max(im1), im1.dtype)
-    print("match?", np.all(im0 == im1))
-    im2 = CvBridge().compressed_imgmsg_to_cv2(msg)
-    print("standard converted:", np.max(im2), im2.dtype)
-    print("match?", np.all(im0 == im2))
+    if skipped:
+        print(f"{bcolors.FAIL}{len(skipped)} bag(s) of {task} skipped:{bcolors.ENDC}")
+        for name, why in skipped:
+            print(f"   {name}: {why}")
+    return infos, (float(np.mean(fps_means)) if fps_means else 0.0)

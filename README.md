@@ -26,7 +26,7 @@ make record ROBOT=franka TASK=demo_task1
 
 This runs `scripts/record.py` inside the container. Stream Deck button layouts are in `assets/franka_buttons.json` / `assets/tiago_buttons.json`.
 
-Controls: home, resume, soft estop, gripper (open/close), tare FTS, record/cancel recording.
+Controls (assets/franka_buttons.json): home, tare FTS, record, cancel recording.
 
 Robot configs (topics, demo name) are in `scripts/record.py:ROBOT_CONFIGS`.
 
@@ -40,7 +40,28 @@ Robot configs (topics, demo name) are in `scripts/record.py:ROBOT_CONFIGS`.
 
 ## Post-Processing Pipeline
 
-WIP
+```bash
+make convert-hdf5 ROBOT=franka TASK=my_demo      # rosbags in /datasets/my_demo/ -> /datasets/hdf5_converted/my_demo.h5
+pytest postprocess/                                # the conversion's tests (synthetic bags)
+```
+
+`postprocess/config_rosbag2hdf5/config.yaml` selects the topics and how frames are built (details in the docstring of
+`postprocess/utils.py`):
+
+- **Frames** are the reference topic's messages (a camera). Every other topic is sampled at them (the last message at
+  or before the frame); frames before every topic has published once are dropped, so no frame uses data from its future.
+- **Actions** (`action_time: next_frame`): the command in effect at the next frame, i.e. the command that followed the
+  observation, which is what a policy must output. `current` keeps the previous behaviour (the command the observation
+  was already following, one frame late).
+- **Full-rate streams**: the numeric topics are also stored at their own rate under `data/demo_k/raw/` (e.g. the wrist
+  force at 800 Hz, which sampling at 30 Hz would alias), with their times.
+- **Bookkeeping**: bags are converted in name order (= recording order) and each demo stores its `bag_name`;
+  converting again only adds the new bags. A bag missing a topic is skipped (listed at the end), the others are
+  converted. Topics marked `optional: true` may be absent (e.g. the raw wrench in bags recorded before it was added).
+
+While recording, the Stream Deck checks each saved bag: every topic must have messages (counts and rates are logged),
+otherwise the RECORD key shows CHECK BAG. CANCEL RECORD deletes the recording in progress, or, when idle, the last
+saved demo.
 ## Make Rules Reference
 
 | Rule       | Description                                      |

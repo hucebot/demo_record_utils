@@ -46,6 +46,11 @@ def main(dataset_name, desired_dir, tasks_to_convert, config_path, verbose):
             selected_topics[topic["from_rosbag_topic_name"]] = {topic["hdf5_name"]:topic_args}
 
     reference_topic_name = config["reference_topic_name"]
+    options = dict(action_time=config.get("action_time", "next_frame"),
+                   time_source=config.get("time_source", "receive"),
+                   image_size=tuple(config.get("image_size", (256, 256))),
+                   save_raw_streams=bool(config.get("save_raw_streams", True)))
+    print(f"Frames from {reference_topic_name}; {options}")
 
     # Create new directory for hdf5
     desired_path = pathlib.Path(desired_dir)
@@ -59,7 +64,9 @@ def main(dataset_name, desired_dir, tasks_to_convert, config_path, verbose):
     # Create one hdf5 dataset for each task independently
     for task in tasks_to_convert:
         #print(topic_names)
-        infos, fps_mean_task = create_task(dataset_path, desired_path, task, reference_topic_name, selected_topics, verbose=verbose)
+        task_infos, fps_mean_task = create_task(dataset_path, desired_path, task, reference_topic_name, selected_topics,
+                                                verbose=verbose, **options)
+        infos = infos or task_infos
         fps_tot_mean[task] = fps_mean_task
 
     # Create default config if there is none
@@ -80,7 +87,7 @@ if __name__ == "__main__":
     parser.add_argument("--rosbag_folder", required=True, help="name of the rosbag dataset folder")
     parser.add_argument("--hdf5_dir", default="", help="name of the desired hdf5 dataset directory")
     parser.add_argument("--tasks", default=[], help="names of the tasks to convert", nargs='+')
-    parser.add_argument("--verbose", action="store_true", help="name of the desired hdf5 dataset directory")
+    parser.add_argument("--verbose", action="store_true", help="print what is extracted")
     parser.add_argument("--config", default="./postprocess/config_rosbag2hdf5/config.yaml", help="path to config.yaml")
     args = parser.parse_args()
 
@@ -90,6 +97,6 @@ if __name__ == "__main__":
 
     tasks = args.tasks
     if len(tasks) == 0:
-        tasks = next(walk(args.rosbag_folder))[1]
+        tasks = sorted(next(walk(args.rosbag_folder))[1])
 
     main(dataset_name=args.rosbag_folder, desired_dir=desired_dir, tasks_to_convert=tasks, verbose=args.verbose, config_path=args.config)

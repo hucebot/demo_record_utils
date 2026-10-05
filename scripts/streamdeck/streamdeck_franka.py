@@ -23,6 +23,13 @@ class StreamDeckFranka(StreamDeckBase):
         # Re-render to ensure Franka-specific colors/labels are pushed to the deck
         self.render_all_buttons()
 
+    def init_buttons(self):
+        super().init_buttons()
+        for key_index, button in self.buttons.items():  # the base class knows only RECORD, CANCEL and HOME
+            if button["label"] == "TARE_FTS":
+                button["label"] = "TARE\nFTS"
+                button["callback"] = self.press_tare_fts
+
     # --- Franka Specific Homing Logic ---
     def press_home(self, key_index):
         self.get_logger().info("Starting Home Sequence...")

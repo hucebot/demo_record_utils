@@ -22,6 +22,7 @@ class StreamDeckBase(Node):
         self.font_path = os.path.join(self.assets_path, 'Roboto-Regular.ttf')
 
         self.deck_lock = threading.Lock()
+        self.record_lock = threading.Lock()  # record / cancel: one at a time
 
         # --- Bag Recording Setup ---
         self.demo_name = config.get("demo_name", "default_demo")
@@ -106,6 +107,10 @@ class StreamDeckBase(Node):
 
     def press_record(self, key_index):
         """Toggle recording state to collect rosbag data."""
+        with self.record_lock:
+            self._toggle_record(key_index)
+
+    def _toggle_record(self, key_index):
         self.record_active = not self.record_active
 
         if self.record_active:
@@ -130,7 +135,13 @@ class StreamDeckBase(Node):
                 self.recording_process.wait()
                 self.recording_process = None
 
-            self.get_logger().info("Recording Stopped and Saved. Triggering background conversion...")
+            self.get_logger().info(f"Recording stopped and saved: {self.current_bag_dir}")
+            if self.motion_flash_timer:
+                self.motion_flash_timer.cancel()
+                self.motion_flash_timer = None
+            self.render_all_buttons()
+            if not self.check_bag(self.current_bag_dir):
+                self.update_button_visual(key_index, "CHECK\nBAG!", self.colors["error"], self.colors["text"])
 
             # --- ASYNC BACKGROUND CONVERSION ---
             # Fires off the fast-skip conversion without blocking the Stream Deck
@@ -155,7 +166,15 @@ class StreamDeckBase(Node):
             self.update_button_visual(self.recording_key_index, "RECORDING", bg, self.colors["text"])
 
     def press_cancel_recording(self, key_index):
-        self.get_logger().info("Canceling Recording...")
+        with self.record_lock:
+            self._cancel_recording(key_index)
+
+    def _cancel_recording(self, key_index):
+        # while recording: stop and delete it; when idle: delete the LAST SAVED demo (discarding a bad one after the fact)
+        if self.record_active:
+            self.get_logger().info("Canceling the recording in progress...")
+        else:
+            self.get_logger().warn(f"Not recording: deleting the last saved demo {self.current_bag_dir}")
 
         # STOP AND DELETE
         if self.recording_process is not None:
@@ -166,6 +185,7 @@ class StreamDeckBase(Node):
         if self.current_bag_dir and os.path.exists(self.current_bag_dir):
             shutil.rmtree(self.current_bag_dir)
             self.get_logger().info(f"Deleted bag folder: {self.current_bag_dir}")
+        self.current_bag_dir = None  # a second press deletes nothing more
 
         self.record_active = False
 
@@ -175,6 +195,25 @@ class StreamDeckBase(Node):
 
         self.render_all_buttons()
         self.press_default(key_index)
+
+    def check_bag(self, bag_dir):
+        """After a recording: every topic asked for has messages in the bag. Logs the counts; False if not."""
+        meta = os.path.join(bag_dir or "", "metadata.yaml")
+        if not os.path.exists(meta):
+            self.get_logger().error(f"No metadata.yaml in {bag_dir}: the recorder did not finish the bag")
+            return False
+        import yaml
+        with open(meta) as f:
+            info = yaml.safe_load(f)["rosbag2_bagfile_information"]
+        counts = {t["topic_metadata"]["name"]: t["message_count"] for t in info["topics_with_message_count"]}
+        seconds = info["duration"]["nanoseconds"] * 1e-9
+        empty = [t for t in self.record_topics if counts.get(t, 0) == 0]
+        for topic in self.record_topics:
+            self.get_logger().info(f"  {topic}: {counts.get(topic, 0)} messages ({counts.get(topic, 0) / max(seconds, 1e-9):.1f} Hz)")
+        if empty:
+            self.get_logger().error(f"{len(empty)} topic(s) recorded NOTHING in {seconds:.1f} s: {empty}")
+            return False
+        return True
 
     def press_home(self, key_index):
         """To be overridden by robot-specific classes."""
