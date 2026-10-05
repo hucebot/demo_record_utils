@@ -40,6 +40,8 @@ import yaml
 from rosbags.rosbag2 import Reader
 from rosbags.typesys import Stores, get_typestore, get_types_from_msg
 
+from messages import IMAGE_TYPES, NUMERIC_TYPES, image_array, numeric_values, raw_image_to_array
+
 # Your custom message definition
 # check: https://ternaris.gitlab.io/rosbags/examples/register_types.html#from-multiple-files
 GRIPPER_WIDTH_MSG = """
@@ -47,9 +49,6 @@ std_msgs/Header header
 float32 width
 """
 
-IMAGE_TYPES = ("sensor_msgs/msg/CompressedImage", "sensor_msgs/msg/Image")
-NUMERIC_TYPES = ("sensor_msgs/msg/JointState", "geometry_msgs/msg/PoseStamped", "geometry_msgs/msg/WrenchStamped",
-                 "custom_msgs/msg/GripperWidth", "geometry_msgs/msg/PointStamped")
 TMP_PREFIX = "_incomplete_"
 
 
@@ -64,55 +63,6 @@ class bcolors:
     ENDC = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
-
-
-def fixed_compressed_imgmsg_to_cv2(cmprs_img_msg, desired_encoding="passthrough"):
-    """
-    Decode a sensor_msgs/CompressedImage (or its data buffer) to an OpenCV image, keeping 16-bit depth PNGs intact
-    (cv_bridge's own conversion truncates them). "passthrough" returns the decoded image as stored (BGR for color).
-    """
-    data = cmprs_img_msg.data if hasattr(cmprs_img_msg, "data") else cmprs_img_msg
-    buf = np.frombuffer(bytes(data), dtype=np.uint8)
-    im = cv2.imdecode(buf, cv2.IMREAD_UNCHANGED)
-    if desired_encoding == "passthrough":
-        return im
-    from cv_bridge import CvBridgeError
-    from cv_bridge.boost.cv_bridge_boost import cvtColor2
-    try:
-        return cvtColor2(im, "bgr8", desired_encoding)
-    except RuntimeError as e:
-        raise CvBridgeError(e)
-
-
-def raw_image_to_array(msg):
-    """sensor_msgs/Image (as deserialised by rosbags) to an array (H, W[, C]), without cv_bridge."""
-    dtype = {"mono16": np.uint16, "16UC1": np.uint16, "32FC1": np.float32}.get(msg.encoding, np.uint8)
-    channels = {"rgb8": 3, "bgr8": 3, "rgba8": 4, "bgra8": 4}.get(msg.encoding, 1)
-    row = np.frombuffer(bytes(msg.data), dtype=dtype).reshape(msg.height, -1)[:, :msg.width * channels]
-    img = row.reshape(msg.height, msg.width, channels) if channels > 1 else row.reshape(msg.height, msg.width)
-    if msg.encoding in ("bgr8", "bgra8"):
-        img = img[..., [2, 1, 0] + ([3] if channels == 4 else [])]
-    return img
-
-
-def numeric_values(msg, msg_type, args):
-    """The numbers one HDF5 field takes from a numeric message."""
-    if msg_type == "sensor_msgs/msg/JointState":
-        return list(getattr(msg, args.get("physical_quantity", "position")))
-    if msg_type == "geometry_msgs/msg/PoseStamped":  # position, then the quaternion (x, y, z, w)
-        p, q = msg.pose.position, msg.pose.orientation
-        return [p.x, p.y, p.z, q.x, q.y, q.z, q.w]
-    if msg_type == "geometry_msgs/msg/WrenchStamped":
-        quantity = args.get("physical_quantity")
-        if quantity not in ("force", "torque"):
-            raise ValueError(f"WrenchStamped fields need physical_quantity: force or torque (got {quantity})")
-        v = getattr(msg.wrench, quantity)
-        return [v.x, v.y, v.z]
-    if msg_type == "custom_msgs/msg/GripperWidth":
-        return [msg.width]
-    if msg_type == "geometry_msgs/msg/PointStamped":
-        return [msg.point.x]
-    raise NotImplementedError(msg_type)
 
 
 def message_time(msg, receive_ns, time_source):
@@ -157,7 +107,7 @@ def extract_all_topics_single_pass(bagpaths, selected_topics, topic_types, time_
                     if msg_type == "sensor_msgs/msg/CompressedImage":
                         values[topic][hdf_name].append(np.asarray(msg.data).copy())  # decoded below, in one batch
                     elif msg_type == "sensor_msgs/msg/Image":
-                        values[topic][hdf_name].append(raw_image_to_array(msg))
+                        values[topic][hdf_name].append(msg)  # decoded below
                     else:
                         values[topic][hdf_name].append(numeric_values(msg, msg_type, args))
 
@@ -170,15 +120,9 @@ def extract_all_topics_single_pass(bagpaths, selected_topics, topic_types, time_
         final_data[topic] = {}
         for hdf_name, items in values[topic].items():
             items = [items[i] for i in order]
-            if topic_types[topic] in IMAGE_TYPES:
-                processed = []
-                for item in items:
-                    img = fixed_compressed_imgmsg_to_cv2(item) if topic_types[topic] == IMAGE_TYPES[0] else item
-                    if topic_types[topic] == IMAGE_TYPES[0] and img.ndim == 3 and img.shape[-1] == 3:
-                        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    processed.append(cv2.resize(img, tuple(image_size), interpolation=cv2.INTER_AREA))
-                arr = np.array(processed)
-                final_data[topic][hdf_name] = arr[..., None] if arr.ndim == 3 else arr
+            if topic_types[topic] in IMAGE_TYPES:  # messages.image_array: as live consumers decode them
+                final_data[topic][hdf_name] = np.array([image_array(item, topic_types[topic], image_size)
+                                                        for item in items])
             else:
                 arr = np.array(items, dtype=np.float32)
                 final_data[topic][hdf_name] = arr[:, None] if arr.ndim == 1 else arr
