@@ -62,7 +62,10 @@ selected_topics_conversion:
     physical_quantity: effort
 
   # ACTION
+  # The commanded pose: what teleoperation sends to the controller, and what a policy sends at run time (ForceVAM's
+  # policy node publishes on this topic). Not cartesian_pos_des_filt, the controller's own filtered copy of it: a
+  # policy trained on filtered targets would have them filtered a second time by the controller (extra lag).
   - hdf5_name: actions/desired_ee_pos
-    from_rosbag_topic_name: /cartesian_impedance/cartesian_pos_des_filt
+    from_rosbag_topic_name: /cartesian_impedance/equilibrium_pose
   - hdf5_name: actions/desired_gripper_width
     from_rosbag_topic_name: /panda_gripper/gripper_command

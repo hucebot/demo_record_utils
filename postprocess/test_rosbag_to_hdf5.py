@@ -23,7 +23,7 @@ from utils import create_task  # noqa: E402
 
 TS = get_typestore(Stores.ROS2_HUMBLE)
 T0 = 1_700_000_000 * 10**9  # ns, the bag's start
-CAM, POSE, FORCE, GRIP = ("/webcam1/image_raw/compressed", "/cartesian_impedance/cartesian_pos_des_filt",
+CAM, POSE, FORCE, GRIP = ("/webcam1/image_raw/compressed", "/cartesian_impedance/equilibrium_pose",
                           "/bota_ft_sensor/wrench_filtered", "/panda_gripper/gripper_command")
 SELECTED = {
     CAM: {"observations/front_cam1": {}},

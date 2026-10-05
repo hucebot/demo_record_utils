@@ -51,7 +51,8 @@ pytest postprocess/                                # the conversion's tests (syn
 - **Frames** are the reference topic's messages (a camera). Every other topic is sampled at them (the last message at
   or before the frame); frames before every topic has published once are dropped, so no frame uses data from its future.
 - **Actions** (`action_time: next_frame`): the command in effect at the next frame, i.e. the command that followed the
-  observation, which is what a policy must output. `current` keeps the previous behaviour (the command the observation
+  observation, which is what a policy must output. The pose command is `/cartesian_impedance/equilibrium_pose`, what
+  teleoperation (and a policy at run time) sends to the controller, not the controller's filtered copy of it. `current` keeps the previous behaviour (the command the observation
   was already following, one frame late).
 - **Times** (`time_source: header`): the messages' header stamps, the way ForceVAM's inference node lines its inputs
   up (the latest front_cam1 stamp, every other topic's last message at or before it), so training frames match what
