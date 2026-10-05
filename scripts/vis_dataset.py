@@ -8,7 +8,7 @@ import subprocess
 Run: python vis/rerun_viewer.py --dataset datasets/cubes.h5
 """
 
-def visualize_hdf5(file_path, output_path, blueprint_path=None, target_demo=None):
+def visualize_hdf5(file_path, output_path, blueprint_path=None, target_demo=None, launch_viewer=True):
     if not os.path.exists(file_path):
         print(f"Error: File {file_path} not found.")
         return
@@ -42,6 +42,11 @@ def visualize_hdf5(file_path, output_path, blueprint_path=None, target_demo=None
                     dataset_paths.append(name)
 
             demo.visititems(collect_datasets)
+            # raw/: the numeric topics at their own rate (postprocess/utils.py), logged on the time axis below, not
+            # per frame (their lengths are not the number of frames)
+            raw_paths = [p for p in dataset_paths if p.startswith("raw/") and not p.endswith("_t")]
+            dataset_paths = [p for p in dataset_paths if not p.startswith("raw/")]
+            frame_times = demo["timestamps"][:, 0] if "timestamps" in demo else None
 
             # Determine number of samples
             num_samples = demo.attrs.get('num_samples', 0)
@@ -66,6 +71,8 @@ def visualize_hdf5(file_path, output_path, blueprint_path=None, target_demo=None
             # 2. Iterate through time and log data
             for i in range(num_samples):
                 rr.set_time("frame", sequence=i)
+                if frame_times is not None:  # the same frames on the time axis, next to the raw streams
+                    rr.set_time("time", duration=float(frame_times[i]))
 
                 for path in dataset_paths:
                     val = demo[path][i]
@@ -146,12 +153,25 @@ def visualize_hdf5(file_path, output_path, blueprint_path=None, target_demo=None
                         else:
                             for j, j_val in enumerate(val):
                                 rr.log(f"Other/{path}/dim_{j}", rr.Scalars(j_val))
-    # 3. Save to disk
+            # 3. The full-rate streams, on the time axis only (e.g. the wrist force at 800 Hz)
+            for path in raw_paths:
+                if path + "_t" not in demo:
+                    continue
+                t, v = demo[path + "_t"][:], demo[path][:]
+                v = v.reshape(len(v), -1)
+                for j in range(v.shape[1]):
+                    rr.send_columns(f"Raw/{path[len('raw/'):]}/dim_{j}",
+                                    indexes=[rr.TimeColumn("time", duration=t)],
+                                    columns=rr.Scalars.columns(scalars=v[:, j]))
+
+    # 4. Save to disk
     rr.save(output_path)
     print(f"\n✅ Success! Dataset compiled to {output_path}")
-    print(f"🚀 Launching Web Viewer (Press Ctrl+C to exit)...")
 
-    # 4. Automatically launch the viewer
+    # 5. Automatically launch the viewer
+    if not launch_viewer:
+        return
+    print(f"🚀 Launching Web Viewer (Press Ctrl+C to exit)...")
     try:
         subprocess.run(["python3", "-m", "rerun", output_path, "--web-viewer", "--memory-limit", "16GB"])
     except KeyboardInterrupt:
@@ -165,10 +185,11 @@ if __name__ == "__main__":
     # Updated defaults:
     parser.add_argument("--blueprint", type=str, default="assets/rerun/blueprints/franka_blueprint.rbl", help="Path to saved Rerun blueprint (.rbl)")
     parser.add_argument("--output", "-o", type=str, default="assets/rerun/converted_datasets/recording.rrd", help="Output .rrd file path")
+    parser.add_argument("--no_viewer", action="store_true", help="only write the .rrd file")
 
     args = parser.parse_args()
 
     # Ensure output directory exists before saving
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
 
-    visualize_hdf5(args.dataset, args.output, args.blueprint, args.demo)
+    visualize_hdf5(args.dataset, args.output, args.blueprint, args.demo, launch_viewer=not args.no_viewer)

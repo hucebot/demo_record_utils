@@ -4,10 +4,12 @@ reference_topic_name: /webcam1/image_raw/compressed
 
 # How frames are built (postprocess/utils.py): the action of a frame is the command in effect at the NEXT frame (the
 # command that followed the observation; "current": the one the observation was already following); times are the
-# recorder's receive times ("header": the messages' stamps, only if every publisher shares one clock); every camera
+# messages' header stamps, as ForceVAM's inference node uses them (ros2/forcevam_inference inference_thread.py: the
+# latest front_cam1 stamp is "now", every other topic its last message stamped at or before it), so training frames
+# are built exactly as the policy's inputs at run time ("receive": the recorder's receive times); every camera
 # resized to image_size (width, height); the numeric topics also stored at full rate under raw/.
 action_time: next_frame
-time_source: receive
+time_source: header
 image_size: [256, 256]
 save_raw_streams: true
 

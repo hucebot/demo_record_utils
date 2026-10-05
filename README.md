@@ -53,6 +53,10 @@ pytest postprocess/                                # the conversion's tests (syn
 - **Actions** (`action_time: next_frame`): the command in effect at the next frame, i.e. the command that followed the
   observation, which is what a policy must output. `current` keeps the previous behaviour (the command the observation
   was already following, one frame late).
+- **Times** (`time_source: header`): the messages' header stamps, the way ForceVAM's inference node lines its inputs
+  up (the latest front_cam1 stamp, every other topic's last message at or before it), so training frames match what
+  the policy sees at run time. Both assume the camera and robot computers share one clock; each demo stores the
+  median receive-minus-stamp delay per topic (`median_header_delay_ms`) to check it.
 - **Full-rate streams**: the numeric topics are also stored at their own rate under `data/demo_k/raw/` (e.g. the wrist
   force at 800 Hz, which sampling at 30 Hz would alias), with their times.
 - **Bookkeeping**: bags are converted in name order (= recording order) and each demo stores its `bag_name`;
