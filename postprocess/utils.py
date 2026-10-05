@@ -8,7 +8,8 @@ Layout written (read by inria_franka_hdf5_to_lerobot.py and ForceVAM):
     data/demo_<k>/raw/<field>, <field>_t    every message of each numeric topic at its own rate (e.g. the wrist force
                                             at 800 Hz, which the frame sampling would alias), times in s on the same clock;
                                             <field> is the config's hdf5_name (raw/observations/ee_force, ...)
-    attrs: bag_name (the demo's rosbag folder), num_samples, action_time, time_source, ...
+    attrs: bag_name (the demo's rosbag folder), num_samples, action_time, time_source, ... and the config's
+           selected_attributes: a text topic's last message (e.g. env_law, the force law's settings while recording)
 
 How a frame is built (config.yaml, all optional):
     reference_topic_name   the frames are this topic's messages (a camera)
@@ -127,6 +128,25 @@ def extract_all_topics_single_pass(bagpaths, selected_topics, topic_types, time_
                 arr = np.array(items, dtype=np.float32)
                 final_data[topic][hdf_name] = arr[:, None] if arr.ndim == 1 else arr
     return topic_times, final_data, median_delay
+
+
+def read_attributes(bagpaths, attributes, topic_types):
+    """{demo attribute: the last message's text} of the attribute topics (std_msgs/String) the bag has."""
+    wanted = {a["from_rosbag_topic_name"]: a["hdf5_attr"] for a in attributes
+              if a["from_rosbag_topic_name"] in topic_types}
+    for topic in wanted:
+        if topic_types[topic] != "std_msgs/msg/String":
+            raise NotImplementedError(f"attribute topic {topic}: {topic_types[topic]} (std_msgs/msg/String only)")
+    if not wanted:
+        return {}
+    typestore = get_typestore(Stores.ROS2_HUMBLE)
+    values = {}
+    for bagpath in bagpaths:
+        with Reader(bagpath) as reader:
+            connections = [x for x in reader.connections if x.topic in wanted]
+            for connection, timestamp, rawdata in reader.messages(connections=connections):
+                values[wanted[connection.topic]] = typestore.deserialize_cdr(rawdata, connection.msgtype).data
+    return values
 
 
 def last_index_at(data_times, query_times):
@@ -280,7 +300,8 @@ def converted_bags(data_root):
 
 
 def create_task(dataset_path, desired_path, task, reference_topic_name, selected_topics, verbose=False,
-                action_time="next_frame", time_source="receive", image_size=(256, 256), save_raw_streams=True):
+                action_time="next_frame", time_source="receive", image_size=(256, 256), save_raw_streams=True,
+                selected_attributes=()):
     print(f"Processing task {task}")
     bag_folders = sorted(p for p in (dataset_path / task).iterdir() if p.is_dir())
     infos, fps_means, skipped = [], [], []
@@ -346,6 +367,8 @@ def create_task(dataset_path, desired_path, task, reference_topic_name, selected
                 for k, (t, v) in raw.items():
                     raw_grp.create_dataset(k, data=v.astype(np.float32, copy=False))
                     raw_grp.create_dataset(k + "_t", data=t.astype(np.float64))
+            for name, value in read_attributes(bagpaths, selected_attributes, topic_types).items():
+                tmp.attrs[name] = value  # e.g. env_law: the force law's settings while recording
             tmp.attrs["bag_name"] = folder.name
             tmp.attrs["num_samples"] = int(timestamps.shape[0])
             tmp.attrs["action_time"] = action_time

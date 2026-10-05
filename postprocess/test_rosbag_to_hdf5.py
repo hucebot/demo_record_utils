@@ -38,8 +38,12 @@ def header(t_ns):
     return Header(stamp=Time(sec=int(t_ns // 10**9), nanosec=int(t_ns % 10**9)), frame_id="")
 
 
-def write_bag(folder, duration=1.0, topics=(CAM, POSE, FORCE, GRIP)):
+def write_bag(folder, duration=1.0, topics=(CAM, POSE, FORCE, GRIP), law=None):
     msgs = []  # (t_ns, topic, type, msg)
+    if law is not None:  # the force law's settings, published once a second (ForceVAM's law bridge)
+        for t in np.arange(0.05, duration, 1.0):
+            msgs.append((t, "/forcevam/law", "std_msgs/msg/String", lambda ns: TS.types["std_msgs/msg/String"](data=law)))
+        topics = tuple(topics) + ("/forcevam/law",)
     jpeg = np.asarray(cv2.imencode(".jpg", np.full((8, 8, 3), 128, np.uint8))[1]).reshape(-1)
     for t in np.arange(0.10, duration, 1 / 30):
         msgs.append((t, CAM, "sensor_msgs/msg/CompressedImage",
@@ -146,3 +150,18 @@ def test_optional_topic_absent(bags, tmp_path):
     create_task(bags, tmp_path, "task", CAM, selected)
     with h5py.File(tmp_path / "task.h5") as f:
         assert len(f["data"]) == 2 and "ee_force_raw" not in f["data/demo_0/obs"]
+
+
+def test_attribute_topics(tmp_path):
+    """A text topic's last message becomes a demo attribute (the force law's settings); absent: no attribute."""
+    root = tmp_path / "bags"
+    (root / "task").mkdir(parents=True)
+    law = '{"k_rest": 1500.0, "push": 40.0}'
+    write_bag(root / "task" / "task_20260101_100000", law=law)
+    write_bag(root / "task" / "task_20260101_110000")
+    attrs = [{"hdf5_attr": "env_law", "from_rosbag_topic_name": "/forcevam/law"}]
+    convert(root, tmp_path, selected_attributes=attrs)
+    with h5py.File(tmp_path / "task.h5") as f:
+        assert f["data/demo_0"].attrs["env_law"] == law
+        assert "env_law" not in f["data/demo_1"].attrs
+

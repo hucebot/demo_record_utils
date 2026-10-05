@@ -30,7 +30,36 @@ ROBOT_CONFIGS = {
             "/cartesian_impedance/joint_state",
             "/panda_gripper/gripper_command",
             "/panda_gripper/width"
-        ]
+        ],
+        # the controller running the robot (homing switches it off and back on) and the tare the TARE key calls
+        "control_controller": "custom_cartesian_impedance_controller",
+        "tare_service": "/bota_ft_sensor/tare",
+    },
+    # The force-law controller (external multipanda_ros2: franka_law.launch.py) behind the lab's topics: ForceVAM's
+    # law bridge (ros2 run forcevam_inference law_bridge) publishes the hand, the joints and the law's settings
+    # (/forcevam/law, stored on every demo) and forwards teleoperation's equilibrium_pose to the law.
+    "franka_law": {
+        "demo_name": "demo_task1",
+        "bag_base_dir": "/datasets",
+        "topics": [
+            "/camera/camera/color/camera_info",
+            "/camera/camera/color/image_raw/compressed",
+            "/camera/camera/depth/camera_info",
+            "/camera/camera/depth/image_rect_raw",
+            "/webcam1/image_raw/compressed",
+            "/webcam2/image_raw/compressed",
+            "/webcam3/image_raw/compressed",
+            "/cartesian_impedance/cartesian_pos_curr",
+            "/cartesian_impedance/equilibrium_pose",
+            "/bota_ft_sensor/wrench_filtered",
+            "/bota_ft_sensor/wrench",
+            "/cartesian_impedance/joint_state",
+            "/panda_gripper/gripper_command",
+            "/panda_gripper/width",
+            "/forcevam/law",
+        ],
+        "control_controller": "multi_mode_controller",
+        "tare_service": "/forcevam_law_bridge/tare",  # the sensor's tare, then the law's (a sensor tare alone looks like a force)
     },
     "tiago": {
         "demo_name": "tiago_task1",
@@ -67,7 +96,7 @@ def main():
     rclpy.init(args=ros_args)
 
     # Instantiate the correct class based on the robot argument
-    if args.robot == "franka":
+    if args.robot in ("franka", "franka_law"):
         node = StreamDeckFranka(config)
     elif args.robot == "tiago":
         node = StreamDeckTiago(config)

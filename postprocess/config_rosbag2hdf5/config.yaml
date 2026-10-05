@@ -69,3 +69,10 @@ selected_topics_conversion:
     from_rosbag_topic_name: /cartesian_impedance/equilibrium_pose
   - hdf5_name: actions/desired_gripper_width
     from_rosbag_topic_name: /panda_gripper/gripper_command
+
+# DEMO ATTRIBUTES: a text topic's last message, stored on the demo (absent topics are skipped)
+selected_attributes:
+  # the force law's settings while recording (ForceVAM's law bridge, robot franka_law): ForceVAM checks a policy runs
+  # with the law its demos were recorded with
+  - hdf5_attr: env_law
+    from_rosbag_topic_name: /forcevam/law

@@ -12,8 +12,11 @@ class StreamDeckFranka(StreamDeckBase):
         super().__init__('stream_deck_franka', 'franka_buttons.json', config)
 
 
-        # Franka specific clients needed for homing and taring the force-torque sensor
-        self.cli_tare = self.create_client(Trigger, '/bota_ft_sensor/tare')
+        # Franka specific clients needed for homing and taring the force-torque sensor; the controller running the
+        # robot and the tare service come from the robot's config (franka: the lab's impedance controller, the
+        # sensor's tare; franka_law: the multi-mode controller, ForceVAM's law bridge's tare)
+        self.control_controller = config.get("control_controller", "custom_cartesian_impedance_controller")
+        self.cli_tare = self.create_client(Trigger, config.get("tare_service", "/bota_ft_sensor/tare"))
         self.cli_switch_controller = self.create_client(SwitchController, '/controller_manager/switch_controller')
         self.cli_load_controller = self.create_client(LoadController, '/controller_manager/load_controller')
         self.cli_configure_controller = self.create_client(ConfigureController, '/controller_manager/configure_controller')
@@ -70,12 +73,12 @@ class StreamDeckFranka(StreamDeckBase):
             self.get_logger().error(f"Configure service call failed: {e}")
 
         self.get_logger().info("Switching to move_to_start_example_controller...")
-        self._switch_controllers(['move_to_start_example_controller'], ['custom_cartesian_impedance_controller'])
+        self._switch_controllers(['move_to_start_example_controller'], [self.control_controller])
         self._schedule_one_shot(5.0, lambda: self._finish_home(key_index))
 
     def _finish_home(self, key_index):
         self.get_logger().info("Home Sequence Complete. Reactivating Impedance Controller...")
-        self._switch_controllers(['custom_cartesian_impedance_controller'], ['move_to_start_example_controller'])
+        self._switch_controllers([self.control_controller], ['move_to_start_example_controller'])
         self.press_default(key_index)
 
     # --- Controller Switch Helper ---

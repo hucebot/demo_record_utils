@@ -49,7 +49,8 @@ def main(dataset_name, desired_dir, tasks_to_convert, config_path, verbose):
     options = dict(action_time=config.get("action_time", "next_frame"),
                    time_source=config.get("time_source", "receive"),
                    image_size=tuple(config.get("image_size", (256, 256))),
-                   save_raw_streams=bool(config.get("save_raw_streams", True)))
+                   save_raw_streams=bool(config.get("save_raw_streams", True)),
+                   selected_attributes=config.get("selected_attributes") or [])
     print(f"Frames from {reference_topic_name}; {options}")
 
     # Create new directory for hdf5

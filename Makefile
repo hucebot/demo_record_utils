@@ -6,7 +6,7 @@ ROBOT ?= franka
 BLUEPRINT ?= /assets/rerun/blueprints/$(ROBOT)_blueprint.rbl
 
 # Dynamically select the container service based on ROBOT
-SERVICE := $(if $(filter franka,$(ROBOT)),franka,tiago)
+SERVICE := $(if $(filter franka franka_law,$(ROBOT)),franka,tiago)
 
 # Define VERBOSE as empty by default
 VERBOSE ?=
